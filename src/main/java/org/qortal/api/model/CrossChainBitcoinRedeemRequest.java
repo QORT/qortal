@@ -25,6 +25,9 @@ public class CrossChainBitcoinRedeemRequest {
 	@Schema(description = "32-byte secret", example = "6gVbAXCVzJXAWwtAVGAfgAkkXpeXvPUwSciPmCfSfXJG")
 	public byte[] secret;
 
+	@Schema(description = "Bitcoin HASH160(public key) for receiving funds, or omit to derive from private key", example = "u17kBVKkKSp12oUzaxFwNnq1JZf")
+	public byte[] receivingAccountInfo;
+
 	public CrossChainBitcoinRedeemRequest() {
 	}
 

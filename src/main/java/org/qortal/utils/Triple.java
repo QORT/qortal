@@ -1,42 +1,55 @@
 package org.qortal.utils;
 
-public class Triple<T, U, V> {
+public class Triple<A, B, C> {
 
-	private T a;
-	private U b;
-	private V c;
+	@FunctionalInterface
+	public interface TripleConsumer<A, B, C> {
+		public void accept(A a, B b, C c);
+	}
+
+	private A a;
+	private B b;
+	private C c;
+
+	public static <A, B, C> Triple<A, B, C> valueOf(A a, B b, C c) {
+		return new Triple<>(a, b, c);
+	}
 
 	public Triple() {
 	}
 
-	public Triple(T a, U b, V c) {
+	public Triple(A a, B b, C c) {
 		this.a = a;
 		this.b = b;
 		this.c = c;
 	}
 
-	public void setA(T a) {
+	public void setA(A a) {
 		this.a = a;
 	}
 
-	public T getA() {
+	public A getA() {
 		return a;
 	}
 
-	public void setB(U b) {
+	public void setB(B b) {
 		this.b = b;
 	}
 
-	public U getB() {
+	public B getB() {
 		return b;
 	}
 
-	public void setC(V c) {
+	public void setC(C c) {
 		this.c = c;
 	}
 
-	public V getC() {
+	public C getC() {
 		return c;
+	}
+
+	public void consume(TripleConsumer<A, B, C> consumer) {
+		consumer.accept(this.a, this.b, this.c);
 	}
 
 }

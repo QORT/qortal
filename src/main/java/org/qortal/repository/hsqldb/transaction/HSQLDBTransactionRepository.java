@@ -9,6 +9,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
@@ -586,6 +587,69 @@ public class HSQLDBTransactionRepository implements TransactionRepository {
 	}
 
 	@Override
+	public List<byte[]> getSignaturesMatchingCriteria(TransactionType txType, byte[] publicKey,
+			Integer minBlockHeight, Integer maxBlockHeight) throws DataException {
+		List<byte[]> signatures = new ArrayList<>();
+
+		StringBuilder sql = new StringBuilder(1024);
+		sql.append("SELECT signature FROM Transactions ");
+
+		List<String> whereClauses = new ArrayList<>();
+		List<Object> bindParams = new ArrayList<>();
+
+		if (txType != null) {
+			whereClauses.add("type = ?");
+			bindParams.add(txType.value);
+		}
+
+		if (publicKey != null) {
+			whereClauses.add("creator = ?");
+			bindParams.add(publicKey);
+		}
+
+		if (minBlockHeight != null) {
+			whereClauses.add("Transactions.block_height >= ?");
+			bindParams.add(minBlockHeight);
+		}
+
+		if (maxBlockHeight != null) {
+			whereClauses.add("Transactions.block_height <= ?");
+			bindParams.add(maxBlockHeight);
+		}
+
+		if (!whereClauses.isEmpty()) {
+			sql.append(" WHERE ");
+
+			final int whereClausesSize = whereClauses.size();
+			for (int wci = 0; wci < whereClausesSize; ++wci) {
+				if (wci != 0)
+					sql.append(" AND ");
+
+				sql.append(whereClauses.get(wci));
+			}
+		}
+
+		sql.append(" ORDER BY Transactions.created_when");
+
+		LOGGER.trace(() -> String.format("Transaction search SQL: %s", sql));
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), bindParams.toArray())) {
+			if (resultSet == null)
+				return signatures;
+
+			do {
+				byte[] signature = resultSet.getBytes(1);
+
+				signatures.add(signature);
+			} while (resultSet.next());
+
+			return signatures;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch matching transaction signatures from repository", e);
+		}
+	}
+
+	@Override
 	public byte[] getLatestAutoUpdateTransaction(TransactionType txType, int txGroupId, Integer service) throws DataException {
 		StringBuilder sql = new StringBuilder(1024);
 		sql.append("SELECT Transactions.signature FROM Transactions");
@@ -1035,6 +1099,108 @@ public class HSQLDBTransactionRepository implements TransactionRepository {
 			sql.append(" DESC");
 
 		HSQLDBRepository.limitOffsetSql(sql, limit, offset);
+
+		List<TransactionData> transactions = new ArrayList<>();
+
+		// Find transactions with no corresponding row in BlockTransactions
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString())) {
+			if (resultSet == null)
+				return transactions;
+
+			do {
+				byte[] signature = resultSet.getBytes(1);
+
+				TransactionData transactionData = this.fromSignature(signature);
+
+				if (transactionData == null)
+					// Something inconsistent with the repository
+					throw new DataException(String.format("Unable to fetch unconfirmed transaction %s from repository?", Base58.encode(signature)));
+
+				transactions.add(transactionData);
+			} while (resultSet.next());
+
+			return transactions;
+		} catch (SQLException | DataException e) {
+			throw new DataException("Unable to fetch unconfirmed transactions from repository", e);
+		}
+	}
+
+	@Override
+	public List<TransactionData> getUnconfirmedTransactions(TransactionType txType, byte[] creatorPublicKey) throws DataException {
+		if (txType == null && creatorPublicKey == null)
+			throw new IllegalArgumentException("At least one of txType or creatorPublicKey must be non-null");
+
+		StringBuilder sql = new StringBuilder(1024);
+		sql.append("SELECT signature FROM UnconfirmedTransactions ");
+		sql.append("JOIN Transactions USING (signature) ");
+		sql.append("WHERE ");
+
+		List<String> whereClauses = new ArrayList<>();
+		List<Object> bindParams = new ArrayList<>();
+
+		if (txType != null) {
+			whereClauses.add("type = ?");
+			bindParams.add(Integer.valueOf(txType.value));
+		}
+
+		if (creatorPublicKey != null) {
+			whereClauses.add("creator = ?");
+			bindParams.add(creatorPublicKey);
+		}
+
+		final int whereClausesSize = whereClauses.size();
+		for (int wci = 0; wci < whereClausesSize; ++wci) {
+			if (wci != 0)
+				sql.append(" AND ");
+
+			sql.append(whereClauses.get(wci));
+		}
+
+		sql.append("ORDER BY created_when, signature");
+
+		List<TransactionData> transactions = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), bindParams.toArray())) {
+			if (resultSet == null)
+				return transactions;
+
+			do {
+				byte[] signature = resultSet.getBytes(1);
+
+				TransactionData transactionData = this.fromSignature(signature);
+
+				if (transactionData == null)
+					// Something inconsistent with the repository
+					throw new DataException(String.format("Unable to fetch unconfirmed transaction %s from repository?", Base58.encode(signature)));
+
+				transactions.add(transactionData);
+			} while (resultSet.next());
+
+			return transactions;
+		} catch (SQLException | DataException e) {
+			throw new DataException("Unable to fetch unconfirmed transactions from repository", e);
+		}
+	}
+
+	@Override
+	public List<TransactionData> getUnconfirmedTransactions(EnumSet<TransactionType> excludedTxTypes) throws DataException {
+		StringBuilder sql = new StringBuilder(1024);
+		sql.append("SELECT signature FROM UnconfirmedTransactions ");
+		sql.append("JOIN Transactions USING (signature) ");
+		sql.append("WHERE type NOT IN (");
+
+		boolean firstTxType = true;
+		for (TransactionType txType : excludedTxTypes) {
+			if (firstTxType)
+				firstTxType = false;
+			else
+				sql.append(", ");
+
+			sql.append(txType.value);
+		}
+
+		sql.append(")");
+		sql.append("ORDER BY created_when, signature");
 
 		List<TransactionData> transactions = new ArrayList<>();
 

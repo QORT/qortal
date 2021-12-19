@@ -4,7 +4,6 @@ import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -51,7 +50,7 @@ public enum Handshake {
 
 			String versionString = helloMessage.getVersionString();
 
-			Matcher matcher = VERSION_PATTERN.matcher(versionString);
+			Matcher matcher = peer.VERSION_PATTERN.matcher(versionString);
 			if (!matcher.lookingAt()) {
 				LOGGER.debug(() -> String.format("Peer %s sent invalid HELLO version string '%s'", peer, versionString));
 				return null;
@@ -71,6 +70,15 @@ public enum Handshake {
 
 			peer.setPeersConnectionTimestamp(peersConnectionTimestamp);
 			peer.setPeersVersion(versionString, version);
+
+			if (Settings.getInstance().getAllowConnectionsWithOlderPeerVersions() == false) {
+				// Ensure the peer is running at least the minimum version allowed for connections
+				final String minPeerVersion = Settings.getInstance().getMinPeerVersion();
+				if (peer.isAtLeastVersion(minPeerVersion) == false) {
+					LOGGER.debug(String.format("Ignoring peer %s because it is on an old version (%s)", peer, versionString));
+					return null;
+				}
+			}
 
 			return CHALLENGE;
 		}
@@ -162,7 +170,9 @@ public enum Handshake {
 			}
 
 			int nonce = responseMessage.getNonce();
-			if (!MemoryPoW.verify2(data, POW_BUFFER_SIZE, POW_DIFFICULTY, nonce)) {
+			int powBufferSize = peer.getPeersVersion() < PEER_VERSION_131 ? POW_BUFFER_SIZE_PRE_131 : POW_BUFFER_SIZE_POST_131;
+			int powDifficulty = peer.getPeersVersion() < PEER_VERSION_131 ? POW_DIFFICULTY_PRE_131 : POW_DIFFICULTY_POST_131;
+			if (!MemoryPoW.verify2(data, powBufferSize, powDifficulty, nonce)) {
 				LOGGER.debug(() -> String.format("Peer %s sent incorrect RESPONSE nonce", peer));
 				return null;
 			}
@@ -194,7 +204,9 @@ public enum Handshake {
 					// No point computing for dead peer
 					return;
 
-				Integer nonce = MemoryPoW.compute2(data, POW_BUFFER_SIZE, POW_DIFFICULTY);
+				int powBufferSize = peer.getPeersVersion() < PEER_VERSION_131 ? POW_BUFFER_SIZE_PRE_131 : POW_BUFFER_SIZE_POST_131;
+				int powDifficulty = peer.getPeersVersion() < PEER_VERSION_131 ? POW_DIFFICULTY_PRE_131 : POW_DIFFICULTY_POST_131;
+				Integer nonce = MemoryPoW.compute2(data, powBufferSize, powDifficulty);
 
 				Message responseMessage = new ResponseMessage(nonce, data);
 				if (!peer.sendMessage(responseMessage))
@@ -240,10 +252,15 @@ public enum Handshake {
 	/** Maximum allowed difference between peer's reported timestamp and when they connected, in milliseconds. */
 	private static final long MAX_TIMESTAMP_DELTA = 30 * 1000L; // ms
 
-	private static final Pattern VERSION_PATTERN = Pattern.compile(Controller.VERSION_PREFIX + "(\\d{1,3})\\.(\\d{1,5})\\.(\\d{1,5})");
+	private static final long PEER_VERSION_131 = 0x0100030001L;
 
-	private static final int POW_BUFFER_SIZE = 8 * 1024 * 1024; // bytes
-	private static final int POW_DIFFICULTY = 8; // leading zero bits
+	private static final int POW_BUFFER_SIZE_PRE_131 = 8 * 1024 * 1024; // bytes
+	private static final int POW_DIFFICULTY_PRE_131 = 8; // leading zero bits
+	// Can always be made harder in the future...
+	private static final int POW_BUFFER_SIZE_POST_131 = 2 * 1024 * 1024; // bytes
+	private static final int POW_DIFFICULTY_POST_131 = 2; // leading zero bits
+
+
 	private static final ExecutorService responseExecutor = Executors.newFixedThreadPool(Settings.getInstance().getNetworkPoWComputePoolSize(), new DaemonThreadFactory("Network-PoW"));
 
 	private static final byte[] ZERO_CHALLENGE = new byte[ChallengeMessage.CHALLENGE_LENGTH];

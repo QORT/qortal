@@ -2,17 +2,23 @@ package org.qortal.api.websocket;
 
 import java.io.IOException;
 import java.io.StringWriter;
+import java.util.List;
 
 import org.eclipse.jetty.websocket.api.Session;
+import org.eclipse.jetty.websocket.api.WebSocketException;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketConnect;
+import org.eclipse.jetty.websocket.api.annotations.OnWebSocketError;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketMessage;
 import org.eclipse.jetty.websocket.api.annotations.WebSocket;
-import org.eclipse.jetty.websocket.servlet.WebSocketServlet;
 import org.eclipse.jetty.websocket.servlet.WebSocketServletFactory;
 import org.qortal.api.ApiError;
-import org.qortal.controller.BlockNotifier;
+import org.qortal.controller.Controller;
 import org.qortal.data.block.BlockData;
+import org.qortal.data.block.BlockSummaryData;
+import org.qortal.event.Event;
+import org.qortal.event.EventBus;
+import org.qortal.event.Listener;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.repository.RepositoryManager;
@@ -20,22 +26,42 @@ import org.qortal.utils.Base58;
 
 @WebSocket
 @SuppressWarnings("serial")
-public class BlocksWebSocket extends WebSocketServlet implements ApiWebSocket {
+public class BlocksWebSocket extends ApiWebSocket implements Listener {
 
 	@Override
 	public void configure(WebSocketServletFactory factory) {
 		factory.register(BlocksWebSocket.class);
+
+		EventBus.INSTANCE.addListener(this::listen);
+	}
+
+	@Override
+	public void listen(Event event) {
+		if (!(event instanceof Controller.NewBlockEvent))
+			return;
+
+		BlockData blockData = ((Controller.NewBlockEvent) event).getBlockData();
+		BlockSummaryData blockSummary = new BlockSummaryData(blockData);
+
+		for (Session session : getSessions())
+			sendBlockSummary(session, blockSummary);
 	}
 
 	@OnWebSocketConnect
+	@Override
 	public void onWebSocketConnect(Session session) {
-		BlockNotifier.Listener listener = blockData -> onNotify(session, blockData);
-		BlockNotifier.getInstance().register(session, listener);
+		super.onWebSocketConnect(session);
 	}
 
 	@OnWebSocketClose
+	@Override
 	public void onWebSocketClose(Session session, int statusCode, String reason) {
-		BlockNotifier.getInstance().deregister(session);
+		super.onWebSocketClose(session, statusCode, reason);
+	}
+
+	@OnWebSocketError
+	public void onWebSocketError(Session session, Throwable throwable) {
+		/* We ignore errors for now, but method here to silence log spam */
 	}
 
 	@OnWebSocketMessage
@@ -53,13 +79,19 @@ public class BlocksWebSocket extends WebSocketServlet implements ApiWebSocket {
 			}
 
 			try (final Repository repository = RepositoryManager.getRepository()) {
-				BlockData blockData = repository.getBlockRepository().fromSignature(signature);
-				if (blockData == null) {
+				int height = repository.getBlockRepository().getHeightFromSignature(signature);
+				if (height == 0) {
 					sendError(session, ApiError.BLOCK_UNKNOWN);
 					return;
 				}
 
-				onNotify(session, blockData);
+				List<BlockSummaryData> blockSummaries = repository.getBlockRepository().getBlockSummaries(height, height);
+				if (blockSummaries == null || blockSummaries.isEmpty()) {
+					sendError(session, ApiError.BLOCK_UNKNOWN);
+					return;
+				}
+
+				sendBlockSummary(session, blockSummaries.get(0));
 			} catch (DataException e) {
 				sendError(session, ApiError.REPOSITORY_ISSUE);
 			}
@@ -82,26 +114,26 @@ public class BlocksWebSocket extends WebSocketServlet implements ApiWebSocket {
 		}
 
 		try (final Repository repository = RepositoryManager.getRepository()) {
-			BlockData blockData = repository.getBlockRepository().fromHeight(height);
-			if (blockData == null) {
+			List<BlockSummaryData> blockSummaries = repository.getBlockRepository().getBlockSummaries(height, height);
+			if (blockSummaries == null || blockSummaries.isEmpty()) {
 				sendError(session, ApiError.BLOCK_UNKNOWN);
 				return;
 			}
 
-			onNotify(session, blockData);
+			sendBlockSummary(session, blockSummaries.get(0));
 		} catch (DataException e) {
 			sendError(session, ApiError.REPOSITORY_ISSUE);
 		}
 	}
 
-	private void onNotify(Session session, BlockData blockData) {
+	private void sendBlockSummary(Session session, BlockSummaryData blockSummary) {
 		StringWriter stringWriter = new StringWriter();
 
 		try {
-			this.marshall(stringWriter, blockData);
+			marshall(stringWriter, blockSummary);
 
-			session.getRemote().sendString(stringWriter.toString());
-		} catch (IOException e) {
+			session.getRemote().sendStringByFuture(stringWriter.toString());
+		} catch (IOException | WebSocketException e) {
 			// No output this time
 		}
 	}

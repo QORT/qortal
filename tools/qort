@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+
+# default output post-processor
+postproc=cat
+
+# Qortal defaults
+port=12391
+example_host=node10.qortal.org
+
+# called-as name
+name="${0##*/}"
+
+while [ -n "$*" ]; do
+	case $1 in
+		-p)
+			shift
+			postproc="json_pp -f json -t json -json_opt utf8,pretty"
+			;;
+
+		[Dd][Ee][Ll][Ee][Tt][Ee])
+			shift
+			method="-X DELETE"
+			;;
+
+		-l)
+			shift
+			src="--interface localhost"
+			;;
+
+		-t)
+			shift
+			testnet=true
+			;;
+
+		-j)
+			shift
+			content_type="Content-Type: application/json"
+			;;
+
+		*)
+			break
+			;;
+	esac
+done
+	
+if [ "${name}" = "qort" ]; then
+	port=${testnet:+62391}
+	port=${port:-12391}
+	example_host=node10.qortal.org
+fi
+
+if [ -z "$*" ]; then
+	echo "usage: $name [-l] [-p] [-t] [DELETE] <url> [<post-data>]"
+	echo "-l: use localhost as source address"
+	echo "-p: pretty-print JSON output"
+	echo "-t: use testnet port"
+	echo "example (using localhost:${port}): $name -p blocks/last"
+	echo "example: $name -p http://${example_host}:${port}/blocks/last"
+	echo "example: BASE_URL=http://${example_host}:${port} $name -p blocks/last"
+	echo "example: BASE_URL=${example_host} $name -p blocks/last"
+	echo "example: $name -l DELETE peers/known"
+	exit
+fi
+
+url=$1
+shift
+
+if [ "${url:0:4}" != "http" ]; then
+	base_url=${BASE_URL-localhost:${port}}
+
+	if [ "${base_url:0:4}" != "http" ]; then
+	        base_url="http://${base_url}"
+	fi
+
+	if [ -n "${base_url/#*:[0-9[0-9]*}" ]; then
+	        base_url="${base_url%%/}:${port}"
+	fi
+
+	url="${base_url%%/}/${url#/}"
+fi
+
+if [ "$#" != 0 ]; then
+	data="--data"
+fi
+
+curl --silent --insecure --connect-timeout 5 ${content_type:+--header} "${content_type}" ${method} ${src} --url ${url} ${data} "$@" | ${postproc}
+echo

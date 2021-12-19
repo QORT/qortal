@@ -10,12 +10,12 @@ import java.util.Set;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.qortal.settings.Settings;
 
 public enum Translator {
 	INSTANCE;
 
 	private static final Logger LOGGER = LogManager.getLogger(Translator.class);
-	private static final String DEFAULT_LANG = Locale.getDefault().getLanguage();
 
 	private static final Map<String, ResourceBundle> resourceBundles = new HashMap<>();
 
@@ -34,7 +34,7 @@ public enum Translator {
 	}
 
 	public String translate(String className, String key) {
-		return this.translate(className, DEFAULT_LANG, key);
+		return this.translate(className, Settings.getInstance().getLocaleLang(), key);
 	}
 
 	public Set<String> keySet(String className, String lang) {

@@ -61,6 +61,11 @@ public class ArbitraryTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Wrap and delegate payment processing to Payment class.
 		new Payment(this.repository).process(arbitraryTransactionData.getSenderPublicKey(), arbitraryTransactionData.getPayments());

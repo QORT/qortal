@@ -1,0 +1,33 @@
+name: PR testing
+
+on:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  mavenTesting:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Cache local Maven repository
+      uses: actions/cache@v2
+      with:
+        path: ~/.m2/repository
+        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+        restore-keys: |
+          ${{ runner.os }}-maven-
+    - name: Set up the Java JDK
+      uses: actions/setup-java@v2
+      with:
+        java-version: '11'
+        distribution: 'adopt'
+
+    - name: Run all tests
+      run: |
+        mvn -B clean test -DskipTests=false --file pom.xml
+        if [ -f "target/site/jacoco/index.html" ]; then echo "Total coverage: $(cat target/site/jacoco/index.html | grep -o 'Total[^%]*%' | grep -o '[0-9]*%')"; fi
+
+    - name: Log coverage percentage
+      run: |
+        if [ ! -f "target/site/jacoco/index.html" ]; then echo "No coverage information available"; fi
+        if [ -f "target/site/jacoco/index.html" ]; then echo "Total coverage: $(cat target/site/jacoco/index.html | grep -o 'Total[^%]*%' | grep -o '[0-9]*%')"; fi

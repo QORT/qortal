@@ -6,6 +6,7 @@ import java.util.List;
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.block.BlockChain;
+import org.qortal.controller.repository.NamesDatabaseIntegrityCheck;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.transaction.RegisterNameTransactionData;
 import org.qortal.data.transaction.TransactionData;
@@ -86,6 +87,17 @@ public class RegisterNameTransaction extends Transaction {
 			return ValidationResult.MULTIPLE_NAMES_FORBIDDEN;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		RegisterNameTransactionData registerNameTransactionData = (RegisterNameTransactionData) transactionData;
+
+		// Rebuild this name in the Names table from the transaction history
+		// This is necessary because in some rare cases names can be missing from the Names table after registration
+		// but we have been unable to reproduce the issue and track down the root cause
+		NamesDatabaseIntegrityCheck namesDatabaseIntegrityCheck = new NamesDatabaseIntegrityCheck();
+		namesDatabaseIntegrityCheck.rebuildName(registerNameTransactionData.getName(), this.repository);
 	}
 
 	@Override

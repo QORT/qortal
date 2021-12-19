@@ -6,6 +6,7 @@ import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.qortal.data.network.OnlineAccountData;
 import org.qortal.transform.Transformer;
@@ -25,7 +26,7 @@ public class GetOnlineAccountsMessage extends Message {
 	private GetOnlineAccountsMessage(int id, List<OnlineAccountData> onlineAccounts) {
 		super(id, MessageType.GET_ONLINE_ACCOUNTS);
 
-		this.onlineAccounts = onlineAccounts;
+		this.onlineAccounts = onlineAccounts.stream().limit(MAX_ACCOUNT_COUNT).collect(Collectors.toList());
 	}
 
 	public List<OnlineAccountData> getOnlineAccounts() {
@@ -35,12 +36,9 @@ public class GetOnlineAccountsMessage extends Message {
 	public static Message fromByteBuffer(int id, ByteBuffer bytes) throws UnsupportedEncodingException {
 		final int accountCount = bytes.getInt();
 
-		if (accountCount > MAX_ACCOUNT_COUNT)
-			return null;
-
 		List<OnlineAccountData> onlineAccounts = new ArrayList<>(accountCount);
 
-		for (int i = 0; i < accountCount; ++i) {
+		for (int i = 0; i < Math.min(MAX_ACCOUNT_COUNT, accountCount); ++i) {
 			long timestamp = bytes.getLong();
 
 			byte[] publicKey = new byte[Transformer.PUBLIC_KEY_LENGTH];

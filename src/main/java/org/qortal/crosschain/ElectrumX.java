@@ -1,21 +1,26 @@
 package org.qortal.crosschain;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Random;
 import java.util.Scanner;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 
 import org.apache.logging.log4j.LogManager;
@@ -25,27 +30,30 @@ import org.json.simple.JSONObject;
 import org.json.simple.JSONValue;
 import org.qortal.crypto.Crypto;
 import org.qortal.crypto.TrustlessSSLSocketFactory;
-import org.qortal.utils.Pair;
 
 import com.google.common.hash.HashCode;
 import com.google.common.primitives.Bytes;
+import org.qortal.utils.BitTwiddling;
 
-public class ElectrumX {
+/** ElectrumX network support for querying Bitcoiny-related info like block headers, transaction outputs, etc. */
+public class ElectrumX extends BitcoinyBlockchainProvider {
 
 	private static final Logger LOGGER = LogManager.getLogger(ElectrumX.class);
 	private static final Random RANDOM = new Random();
 
-	private static final int DEFAULT_TCP_PORT = 50001;
-	private static final int DEFAULT_SSL_PORT = 50002;
-
+	private static final double MIN_PROTOCOL_VERSION = 1.2;
 	private static final int BLOCK_HEADER_LENGTH = 80;
 
-	private static final Map<String, ElectrumX> instances = new HashMap<>();
+	// "message": "daemon error: DaemonError({'code': -5, 'message': 'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.'})"
+	private static final Pattern DAEMON_ERROR_REGEX = Pattern.compile("DaemonError\\(\\{.*'code': ?(-?[0-9]+).*\\}\\)\\z"); // Capture 'code' inside curly-brace content
 
-	static class Server {
+	/** Error message sent by some ElectrumX servers when they don't support returning verbose transactions. */
+	private static final String VERBOSE_TRANSACTIONS_UNSUPPORTED_MESSAGE = "verbose transactions are currently unsupported";
+
+	public static class Server {
 		String hostname;
 
-		enum ConnectionType { TCP, SSL };
+		public enum ConnectionType { TCP, SSL }
 		ConnectionType connectionType;
 
 		int port;
@@ -82,169 +90,395 @@ public class ElectrumX {
 		}
 	}
 	private Set<Server> servers = new HashSet<>();
+	private List<Server> remainingServers = new ArrayList<>();
+	private Set<Server> uselessServers = Collections.synchronizedSet(new HashSet<>());
 
+	private final String netId;
+	private final String expectedGenesisHash;
+	private final Map<Server.ConnectionType, Integer> defaultPorts = new EnumMap<>(Server.ConnectionType.class);
+
+	private final Object serverLock = new Object();
 	private Server currentServer;
 	private Socket socket;
 	private Scanner scanner;
 	private int nextId = 1;
 
+	private static final int TX_CACHE_SIZE = 200;
+	@SuppressWarnings("serial")
+	private final Map<String, BitcoinyTransaction> transactionCache = Collections.synchronizedMap(new LinkedHashMap<>(TX_CACHE_SIZE + 1, 0.75F, true) {
+		// This method is called just after a new entry has been added
+		@Override
+		public boolean removeEldestEntry(Map.Entry<String, BitcoinyTransaction> eldest) {
+			return size() > TX_CACHE_SIZE;
+		}
+	});
+
 	// Constructors
 
-	private ElectrumX(String bitcoinNetwork) {
-		switch (bitcoinNetwork) {
-			case "MAIN":
-				servers.addAll(Arrays.asList());
-				break;
-
-			case "TEST3":
-				servers.addAll(Arrays.asList(
-						new Server("tn.not.fyi", Server.ConnectionType.TCP, 55001),
-						new Server("tn.not.fyi", Server.ConnectionType.SSL, 55002),
-						new Server("testnet.aranguren.org", Server.ConnectionType.TCP, 51001),
-						new Server("testnet.aranguren.org", Server.ConnectionType.SSL, 51002),
-						new Server("testnet.hsmiths.com", Server.ConnectionType.SSL, 53012)));
-				break;
-
-			case "REGTEST":
-				servers.addAll(Arrays.asList(
-						new Server("localhost", Server.ConnectionType.TCP, DEFAULT_TCP_PORT),
-						new Server("localhost", Server.ConnectionType.SSL, DEFAULT_SSL_PORT)));
-				break;
-
-			default:
-				throw new IllegalArgumentException(String.format("Bitcoin network '%s' unknown", bitcoinNetwork));
-		}
-
-		LOGGER.debug(() -> String.format("Starting ElectrumX support for %s Bitcoin network", bitcoinNetwork));
-		rpc("server.banner");
-	}
-
-	public static synchronized ElectrumX getInstance(String bitcoinNetwork) {
-		if (!instances.containsKey(bitcoinNetwork))
-			instances.put(bitcoinNetwork, new ElectrumX(bitcoinNetwork));
-
-		return instances.get(bitcoinNetwork);
+	public ElectrumX(String netId, String genesisHash, Collection<Server> initialServerList, Map<Server.ConnectionType, Integer> defaultPorts) {
+		this.netId = netId;
+		this.expectedGenesisHash = genesisHash;
+		this.servers.addAll(initialServerList);
+		this.defaultPorts.putAll(defaultPorts);
 	}
 
 	// Methods for use by other classes
 
-	public Integer getCurrentHeight() {
-		JSONObject blockJson = (JSONObject) this.rpc("blockchain.headers.subscribe");
-		if (blockJson == null || !blockJson.containsKey("height"))
-			return null;
-
-		return ((Long) blockJson.get("height")).intValue();
+	@Override
+	public String getNetId() {
+		return this.netId;
 	}
 
-	public List<byte[]> getBlockHeaders(int startHeight, long count) {
-		JSONObject blockJson = (JSONObject) this.rpc("blockchain.block.headers", startHeight, count);
-		if (blockJson == null || !blockJson.containsKey("count") || !blockJson.containsKey("hex"))
-			return null;
+	/**
+	 * Returns current blockchain height.
+	 * <p>
+	 * @throws ForeignBlockchainException if error occurs
+	 */
+	@Override
+	public int getCurrentHeight() throws ForeignBlockchainException {
+		Object blockObj = this.rpc("blockchain.headers.subscribe");
+		if (!(blockObj instanceof JSONObject))
+			throw new ForeignBlockchainException.NetworkException("Unexpected output from ElectrumX blockchain.headers.subscribe RPC");
 
-		Long returnedCount = (Long) blockJson.get("count");
-		String hex = (String) blockJson.get("hex");
+		JSONObject blockJson = (JSONObject) blockObj;
 
-		byte[] raw = HashCode.fromString(hex).asBytes();
-		if (raw.length != returnedCount * BLOCK_HEADER_LENGTH)
-			return null;
+		Object heightObj = blockJson.get("height");
+
+		if (!(heightObj instanceof Long))
+			throw new ForeignBlockchainException.NetworkException("Missing/invalid 'height' in JSON from ElectrumX blockchain.headers.subscribe RPC");
+
+		return ((Long) heightObj).intValue();
+	}
+
+	/**
+	 * Returns list of raw block headers, starting from <tt>startHeight</tt> inclusive.
+	 * <p>
+	 * @throws ForeignBlockchainException if error occurs
+	 */
+	@Override
+	public List<byte[]> getRawBlockHeaders(int startHeight, int count) throws ForeignBlockchainException {
+		Object blockObj = this.rpc("blockchain.block.headers", startHeight, count);
+		if (!(blockObj instanceof JSONObject))
+			throw new ForeignBlockchainException.NetworkException("Unexpected output from ElectrumX blockchain.block.headers RPC");
+
+		JSONObject blockJson = (JSONObject) blockObj;
+
+		Object countObj = blockJson.get("count");
+		Object hexObj = blockJson.get("hex");
+
+		if (!(countObj instanceof Long) || !(hexObj instanceof String))
+			throw new ForeignBlockchainException.NetworkException("Missing/invalid 'count' or 'hex' entries in JSON from ElectrumX blockchain.block.headers RPC");
+
+		Long returnedCount = (Long) countObj;
+		String hex = (String) hexObj;
 
 		List<byte[]> rawBlockHeaders = new ArrayList<>(returnedCount.intValue());
-		for (int i = 0; i < returnedCount; ++i)
-			rawBlockHeaders.add(Arrays.copyOfRange(raw, i * BLOCK_HEADER_LENGTH, (i + 1) * BLOCK_HEADER_LENGTH));
+
+		byte[] raw = HashCode.fromString(hex).asBytes();
+
+		// Most chains use a fixed length 80 byte header, so block headers can be split up by dividing the hex into
+		// 80-byte segments. However, some chains such as DOGE use variable length headers due to AuxPoW or other
+		// reasons. In these cases we can identify the start of each block header by the location of the block version
+		// numbers. Each block starts with a version number, and for DOGE this is easily identifiable (6422788) at the
+		// time of writing (Jul 2021). If we encounter a chain that is using more generic version numbers (e.g. 1)
+		// and can't be used to accurately identify block indexes, then there are sufficient checks to ensure an
+		// exception is thrown.
+
+		if (raw.length == returnedCount * BLOCK_HEADER_LENGTH) {
+			// Fixed-length header (BTC, LTC, etc)
+			for (int i = 0; i < returnedCount; ++i) {
+				rawBlockHeaders.add(Arrays.copyOfRange(raw, i * BLOCK_HEADER_LENGTH, (i + 1) * BLOCK_HEADER_LENGTH));
+			}
+		}
+		else if (raw.length > returnedCount * BLOCK_HEADER_LENGTH) {
+			// Assume AuxPoW variable length header (DOGE)
+			int referenceVersion = BitTwiddling.intFromLEBytes(raw, 0); // DOGE uses 6422788 at time of commit (Jul 2021)
+			for (int i = 0; i < raw.length - 4; ++i) {
+				// Locate the start of each block by its version number
+				if (BitTwiddling.intFromLEBytes(raw, i) == referenceVersion) {
+					rawBlockHeaders.add(Arrays.copyOfRange(raw, i, i + BLOCK_HEADER_LENGTH));
+				}
+			}
+			// Ensure that we found the correct number of block headers
+			if (rawBlockHeaders.size() != count) {
+				throw new ForeignBlockchainException.NetworkException("Unexpected raw header contents in JSON from ElectrumX blockchain.block.headers RPC.");
+			}
+		}
+		else if (raw.length != returnedCount * BLOCK_HEADER_LENGTH) {
+			throw new ForeignBlockchainException.NetworkException("Unexpected raw header length in JSON from ElectrumX blockchain.block.headers RPC");
+		}
 
 		return rawBlockHeaders;
 	}
 
-	public Long getBalance(byte[] script) {
+	/**
+	 * Returns confirmed balance, based on passed payment script.
+	 * <p>
+	 * @return confirmed balance, or zero if script unknown
+	 * @throws ForeignBlockchainException if there was an error
+	 */
+	@Override
+	public long getConfirmedBalance(byte[] script) throws ForeignBlockchainException {
 		byte[] scriptHash = Crypto.digest(script);
 		Bytes.reverse(scriptHash);
 
-		JSONObject balanceJson = (JSONObject) this.rpc("blockchain.scripthash.get_balance", HashCode.fromBytes(scriptHash).toString());
-		if (balanceJson == null || !balanceJson.containsKey("confirmed"))
-			return null;
+		Object balanceObj = this.rpc("blockchain.scripthash.get_balance", HashCode.fromBytes(scriptHash).toString());
+		if (!(balanceObj instanceof JSONObject))
+			throw new ForeignBlockchainException.NetworkException("Unexpected output from ElectrumX blockchain.scripthash.get_balance RPC");
+
+		JSONObject balanceJson = (JSONObject) balanceObj;
+
+		Object confirmedBalanceObj = balanceJson.get("confirmed");
+
+		if (!(confirmedBalanceObj instanceof Long))
+			throw new ForeignBlockchainException.NetworkException("Missing confirmed balance from ElectrumX blockchain.scripthash.get_balance RPC");
 
 		return (Long) balanceJson.get("confirmed");
 	}
 
-	public List<Pair<byte[], Integer>> getUnspentOutputs(byte[] script) {
+	/**
+	 * Returns list of unspent outputs pertaining to passed payment script.
+	 * <p>
+	 * @return list of unspent outputs, or empty list if script unknown
+	 * @throws ForeignBlockchainException if there was an error.
+	 */
+	@Override
+	public List<UnspentOutput> getUnspentOutputs(byte[] script, boolean includeUnconfirmed) throws ForeignBlockchainException {
 		byte[] scriptHash = Crypto.digest(script);
 		Bytes.reverse(scriptHash);
 
-		JSONArray unspentJson = (JSONArray) this.rpc("blockchain.scripthash.listunspent", HashCode.fromBytes(scriptHash).toString());
-		if (unspentJson == null)
-			return null;
+		Object unspentJson = this.rpc("blockchain.scripthash.listunspent", HashCode.fromBytes(scriptHash).toString());
+		if (!(unspentJson instanceof JSONArray))
+			throw new ForeignBlockchainException("Expected array output from ElectrumX blockchain.scripthash.listunspent RPC");
 
-		List<Pair<byte[], Integer>> unspentOutputs = new ArrayList<>();
-		for (Object rawUnspent : unspentJson) {
+		List<UnspentOutput> unspentOutputs = new ArrayList<>();
+		for (Object rawUnspent : (JSONArray) unspentJson) {
 			JSONObject unspent = (JSONObject) rawUnspent;
+
+			int height = ((Long) unspent.get("height")).intValue();
+			// We only want unspent outputs from confirmed transactions (and definitely not mempool duplicates with height 0)
+			if (!includeUnconfirmed && height <= 0)
+				continue;
 
 			byte[] txHash = HashCode.fromString((String) unspent.get("tx_hash")).asBytes();
 			int outputIndex = ((Long) unspent.get("tx_pos")).intValue();
+			long value = (Long) unspent.get("value");
 
-			unspentOutputs.add(new Pair<>(txHash, outputIndex));
+			unspentOutputs.add(new UnspentOutput(txHash, outputIndex, height, value));
 		}
 
 		return unspentOutputs;
 	}
 
-	public byte[] getRawTransaction(byte[] txHash) {
-		String rawTransactionHex = (String) this.rpc("blockchain.transaction.get", HashCode.fromBytes(txHash).toString());
-		if (rawTransactionHex == null)
-			return null;
+	/**
+	 * Returns raw transaction for passed transaction hash.
+	 * <p>
+	 * NOTE: Do not mutate returned byte[]!
+	 * 
+	 * @throws ForeignBlockchainException.NotFoundException if transaction not found
+	 * @throws ForeignBlockchainException if error occurs
+	 */
+	@Override
+	public byte[] getRawTransaction(String txHash) throws ForeignBlockchainException {
+		Object rawTransactionHex;
+		try {
+			rawTransactionHex = this.rpc("blockchain.transaction.get", txHash, false);
+		} catch (ForeignBlockchainException.NetworkException e) {
+			// DaemonError({'code': -5, 'message': 'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.'})
+			if (Integer.valueOf(-5).equals(e.getDaemonErrorCode()))
+				throw new ForeignBlockchainException.NotFoundException(e.getMessage());
 
-		return HashCode.fromString(rawTransactionHex).asBytes();
+			throw e;
+		}
+
+		if (!(rawTransactionHex instanceof String))
+			throw new ForeignBlockchainException.NetworkException("Expected hex string as raw transaction from ElectrumX blockchain.transaction.get RPC");
+
+		return HashCode.fromString((String) rawTransactionHex).asBytes();
 	}
 
-	public List<byte[]> getAddressTransactions(byte[] script) {
+	/**
+	 * Returns raw transaction for passed transaction hash.
+	 * <p>
+	 * NOTE: Do not mutate returned byte[]!
+	 * 
+	 * @throws ForeignBlockchainException.NotFoundException if transaction not found
+	 * @throws ForeignBlockchainException if error occurs
+	 */
+	@Override
+	public byte[] getRawTransaction(byte[] txHash) throws ForeignBlockchainException {
+		return getRawTransaction(HashCode.fromBytes(txHash).toString());
+	}
+
+	/**
+	 * Returns transaction info for passed transaction hash.
+	 * <p>
+	 * @throws ForeignBlockchainException.NotFoundException if transaction not found
+	 * @throws ForeignBlockchainException if error occurs
+	 */
+	@Override
+	public BitcoinyTransaction getTransaction(String txHash) throws ForeignBlockchainException {
+		// Check cache first
+		BitcoinyTransaction transaction = transactionCache.get(txHash);
+		if (transaction != null)
+			return transaction;
+
+		Object transactionObj = null;
+
+		do {
+			try {
+				transactionObj = this.rpc("blockchain.transaction.get", txHash, true);
+			} catch (ForeignBlockchainException.NetworkException e) {
+				// DaemonError({'code': -5, 'message': 'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.'})
+				if (Integer.valueOf(-5).equals(e.getDaemonErrorCode()))
+					throw new ForeignBlockchainException.NotFoundException(e.getMessage());
+
+				// Some servers also return non-standard responses like this:
+				// {"error":"verbose transactions are currently unsupported","id":3,"jsonrpc":"2.0"}
+				// We should probably not use this server any more
+				if (e.getServer() != null && e.getMessage() != null && e.getMessage().contains(VERBOSE_TRANSACTIONS_UNSUPPORTED_MESSAGE)) {
+					Server uselessServer = (Server) e.getServer();
+					LOGGER.trace(() -> String.format("Server %s doesn't support verbose transactions - barring use of that server", uselessServer));
+					this.uselessServers.add(uselessServer);
+					this.closeServer(uselessServer);
+					continue;
+				}
+
+				throw e;
+			}
+		} while (transactionObj == null);
+
+		if (!(transactionObj instanceof JSONObject))
+			throw new ForeignBlockchainException.NetworkException("Expected JSONObject as response from ElectrumX blockchain.transaction.get RPC");
+
+		JSONObject transactionJson = (JSONObject) transactionObj;
+
+		Object inputsObj = transactionJson.get("vin");
+		if (!(inputsObj instanceof JSONArray))
+			throw new ForeignBlockchainException.NetworkException("Expected JSONArray for 'vin' from ElectrumX blockchain.transaction.get RPC");
+
+		Object outputsObj = transactionJson.get("vout");
+		if (!(outputsObj instanceof JSONArray))
+			throw new ForeignBlockchainException.NetworkException("Expected JSONArray for 'vout' from ElectrumX blockchain.transaction.get RPC");
+
+		try {
+			int size = ((Long) transactionJson.get("size")).intValue();
+			int locktime = ((Long) transactionJson.get("locktime")).intValue();
+
+			// Timestamp might not be present, e.g. for unconfirmed transaction
+			Object timeObj = transactionJson.get("time");
+			Integer timestamp = timeObj != null
+					? ((Long) timeObj).intValue()
+					: null;
+
+			List<BitcoinyTransaction.Input> inputs = new ArrayList<>();
+			for (Object inputObj : (JSONArray) inputsObj) {
+				JSONObject inputJson = (JSONObject) inputObj;
+
+				String scriptSig = (String) ((JSONObject) inputJson.get("scriptSig")).get("hex");
+				int sequence = ((Long) inputJson.get("sequence")).intValue();
+				String outputTxHash = (String) inputJson.get("txid");
+				int outputVout = ((Long) inputJson.get("vout")).intValue();
+
+				inputs.add(new BitcoinyTransaction.Input(scriptSig, sequence, outputTxHash, outputVout));
+			}
+
+			List<BitcoinyTransaction.Output> outputs = new ArrayList<>();
+			for (Object outputObj : (JSONArray) outputsObj) {
+				JSONObject outputJson = (JSONObject) outputObj;
+
+				String scriptPubKey = (String) ((JSONObject) outputJson.get("scriptPubKey")).get("hex");
+				long value = BigDecimal.valueOf((Double) outputJson.get("value")).setScale(8).unscaledValue().longValue();
+
+				// address too, if present
+				List<String> addresses = null;
+				Object addressesObj = ((JSONObject) outputJson.get("scriptPubKey")).get("addresses");
+				if (addressesObj instanceof JSONArray) {
+					addresses = new ArrayList<>();
+					for (Object addressObj : (JSONArray) addressesObj)
+						addresses.add((String) addressObj);
+				}
+
+				outputs.add(new BitcoinyTransaction.Output(scriptPubKey, value, addresses));
+			}
+
+			transaction = new BitcoinyTransaction(txHash, size, locktime, timestamp, inputs, outputs);
+
+			// Save into cache
+			transactionCache.put(txHash, transaction);
+
+			return transaction;
+		} catch (NullPointerException | ClassCastException e) {
+			// Unexpected / invalid response from ElectrumX server
+		}
+
+		throw new ForeignBlockchainException.NetworkException("Unexpected JSON format from ElectrumX blockchain.transaction.get RPC");
+	}
+
+	/**
+	 * Returns list of transactions, relating to passed payment script.
+	 * <p>
+	 * @return list of related transactions, or empty list if script unknown
+	 * @throws ForeignBlockchainException if error occurs
+	 */
+	@Override
+	public List<TransactionHash> getAddressTransactions(byte[] script, boolean includeUnconfirmed) throws ForeignBlockchainException {
 		byte[] scriptHash = Crypto.digest(script);
 		Bytes.reverse(scriptHash);
 
-		JSONArray transactionsJson = (JSONArray) this.rpc("blockchain.scripthash.get_history", HashCode.fromBytes(scriptHash).toString());
-		if (transactionsJson == null)
-			return null;
+		Object transactionsJson = this.rpc("blockchain.scripthash.get_history", HashCode.fromBytes(scriptHash).toString());
+		if (!(transactionsJson instanceof JSONArray))
+			throw new ForeignBlockchainException.NetworkException("Expected array output from ElectrumX blockchain.scripthash.get_history RPC");
 
-		List<byte[]> rawTransactions = new ArrayList<>();
+		List<TransactionHash> transactionHashes = new ArrayList<>();
 
-		for (Object rawTransactionInfo : transactionsJson) {
+		for (Object rawTransactionInfo : (JSONArray) transactionsJson) {
 			JSONObject transactionInfo = (JSONObject) rawTransactionInfo;
 
-			// We only want confirmed transactions
-			if (!transactionInfo.containsKey("height"))
+			Long height = (Long) transactionInfo.get("height");
+			if (!includeUnconfirmed && (height == null || height == 0))
+				// We only want confirmed transactions
 				continue;
 
 			String txHash = (String) transactionInfo.get("tx_hash");
-			String rawTransactionHex = (String) this.rpc("blockchain.transaction.get", txHash);
-			if (rawTransactionHex == null)
-				return null;
 
-			rawTransactions.add(HashCode.fromString(rawTransactionHex).asBytes());
+			transactionHashes.add(new TransactionHash(height.intValue(), txHash));
 		}
 
-		return rawTransactions;
+		return transactionHashes;
 	}
 
-	public boolean broadcastTransaction(byte[] transactionBytes) {
+	/**
+	 * Broadcasts raw transaction to network.
+	 * <p>
+	 * @throws ForeignBlockchainException if error occurs
+	 */
+	@Override
+	public void broadcastTransaction(byte[] transactionBytes) throws ForeignBlockchainException {
 		Object rawBroadcastResult = this.rpc("blockchain.transaction.broadcast", HashCode.fromBytes(transactionBytes).toString());
-		if (rawBroadcastResult == null)
-			return false;
 
-		// If result is a String, then it is simply transaction hash.
-		// Otherwise result is JSON and probably contains error info instead.
-		return rawBroadcastResult instanceof String;
+		// We're expecting a simple string that is the transaction hash
+		if (!(rawBroadcastResult instanceof String))
+			throw new ForeignBlockchainException.NetworkException("Unexpected response from ElectrumX blockchain.transaction.broadcast RPC");
 	}
 
 	// Class-private utility methods
 
-	private Set<Server> serverPeersSubscribe() {
+	/**
+	 * Query current server for its list of peer servers, and return those we can parse.
+	 * <p>
+	 * @throws ForeignBlockchainException
+	 * @throws ClassCastException to be handled by caller
+	 */
+	private Set<Server> serverPeersSubscribe() throws ForeignBlockchainException {
 		Set<Server> newServers = new HashSet<>();
 
-		JSONArray peers = (JSONArray) this.connectedRpc("server.peers.subscribe");
-		if (peers == null)
-			return newServers;
+		Object peers = this.connectedRpc("server.peers.subscribe");
 
-		for (Object rawPeer : peers) {
+		for (Object rawPeer : (JSONArray) peers) {
 			JSONArray peer = (JSONArray) rawPeer;
 			if (peer.size() < 3)
+				// We're expecting at least 3 fields for each peer entry: IP, hostname, features
 				continue;
 
 			String hostname = (String) peer.get(1);
@@ -253,21 +487,26 @@ public class ElectrumX {
 			for (Object rawFeature : features) {
 				String feature = (String) rawFeature;
 				Server.ConnectionType connectionType = null;
-				int port = -1;
+				Integer port = null;
 
 				switch (feature.charAt(0)) {
 					case 's':
 						connectionType = Server.ConnectionType.SSL;
-						port = DEFAULT_SSL_PORT;
+						port = this.defaultPorts.get(connectionType);
 						break;
 
 					case 't':
 						connectionType = Server.ConnectionType.TCP;
-						port = DEFAULT_TCP_PORT;
+						port = this.defaultPorts.get(connectionType);
+						break;
+
+					default:
+						// e.g. could be 'v' for protocol version, or 'p' for pruning limit
 						break;
 				}
 
-				if (connectionType == null)
+				if (connectionType == null || port == null)
+					// We couldn't extract any peer connection info?
 					continue;
 
 				// Possible non-default port?
@@ -287,32 +526,39 @@ public class ElectrumX {
 		return newServers;
 	}
 
-	private synchronized Object rpc(String method, Object...params) {
-		while (haveConnection()) {
-			Object response = connectedRpc(method, params);
-			if (response != null)
-				return response;
+	/**
+	 * Performs RPC call, with automatic reconnection to different server if needed.
+	 * <p>
+	 * @return "result" object from within JSON output
+	 * @throws ForeignBlockchainException if server returns error or something goes wrong
+	 */
+	private Object rpc(String method, Object...params) throws ForeignBlockchainException {
+		synchronized (this.serverLock) {
+			if (this.remainingServers.isEmpty())
+				this.remainingServers.addAll(this.servers);
 
-			this.currentServer = null;
-			try {
-				this.socket.close();
-			} catch (IOException e) {
-				/* ignore */
+			while (haveConnection()) {
+				Object response = connectedRpc(method, params);
+				if (response != null)
+					return response;
+
+				// Didn't work, try another server...
+				this.closeServer();
 			}
-			this.scanner = null;
-		}
 
-		return null;
+			// Failed to perform RPC - maybe lack of servers?
+			LOGGER.info("Error: No connected Electrum servers when trying to make RPC call");
+			throw new ForeignBlockchainException.NetworkException(String.format("Failed to perform ElectrumX RPC %s", method));
+		}
 	}
 
-	private boolean haveConnection() {
+	/** Returns true if we have, or create, a connection to an ElectrumX server. */
+	private boolean haveConnection() throws ForeignBlockchainException {
 		if (this.currentServer != null)
 			return true;
 
-		List<Server> remainingServers = new ArrayList<>(this.servers);
-
-		while (!remainingServers.isEmpty()) {
-			Server server = remainingServers.remove(RANDOM.nextInt(remainingServers.size()));
+		while (!this.remainingServers.isEmpty()) {
+			Server server = this.remainingServers.remove(RANDOM.nextInt(this.remainingServers.size()));
 			LOGGER.trace(() -> String.format("Connecting to %s", server));
 
 			try {
@@ -325,36 +571,55 @@ public class ElectrumX {
 
 				if (server.connectionType == Server.ConnectionType.SSL) {
 					SSLSocketFactory factory = TrustlessSSLSocketFactory.getSocketFactory();
-					this.socket = (SSLSocket) factory.createSocket(this.socket, server.hostname, server.port, true);
+					this.socket = factory.createSocket(this.socket, server.hostname, server.port, true);
 				}
 
 				this.scanner = new Scanner(this.socket.getInputStream());
 				this.scanner.useDelimiter("\n");
 
-				// Check connection works by asking for more servers
+				// Check connection is suitable by asking for server features, including genesis block hash
+				JSONObject featuresJson = (JSONObject) this.connectedRpc("server.features");
+
+				if (featuresJson == null || Double.valueOf((String) featuresJson.get("protocol_min")) < MIN_PROTOCOL_VERSION)
+					continue;
+
+				if (this.expectedGenesisHash != null && !((String) featuresJson.get("genesis_hash")).equals(this.expectedGenesisHash))
+					continue;
+
+				// Ask for more servers
 				Set<Server> moreServers = serverPeersSubscribe();
+				// Discard duplicate servers we already know
 				moreServers.removeAll(this.servers);
-				remainingServers.addAll(moreServers);
+				// Add to both lists
+				this.remainingServers.addAll(moreServers);
 				this.servers.addAll(moreServers);
 
 				LOGGER.debug(() -> String.format("Connected to %s", server));
 				this.currentServer = server;
 				return true;
-			} catch (IOException e) {
-				// Try another server...
-				this.socket = null;
-				this.scanner = null;
+			} catch (IOException | ForeignBlockchainException | ClassCastException | NullPointerException e) {
+				// Didn't work, try another server...
+				closeServer();
 			}
 		}
 
 		return false;
 	}
 
+	/**
+	 * Perform RPC using currently connected server.
+	 * <p>
+	 * @param method
+	 * @param params
+	 * @return response Object, or null if server fails to respond
+	 * @throws ForeignBlockchainException if server returns error
+	 */
 	@SuppressWarnings("unchecked")
-	private Object connectedRpc(String method, Object...params) {
+	private Object connectedRpc(String method, Object...params) throws ForeignBlockchainException {
 		JSONObject requestJson = new JSONObject();
 		requestJson.put("id", this.nextId++);
 		requestJson.put("method", method);
+		requestJson.put("jsonrpc", "2.0");
 
 		JSONArray requestParams = new JSONArray();
 		requestParams.addAll(Arrays.asList(params));
@@ -369,19 +634,94 @@ public class ElectrumX {
 			this.socket.getOutputStream().write(request.getBytes());
 			response = scanner.next();
 		} catch (IOException | NoSuchElementException e) {
+			// Unable to send, or receive -- try another server?
 			return null;
 		}
 
 		LOGGER.trace(() -> String.format("Response: %s", response));
 
 		if (response.isEmpty())
+			// Empty response - try another server?
 			return null;
 
-		JSONObject responseJson = (JSONObject) JSONValue.parse(response);
-		if (responseJson == null)
+		Object responseObj = JSONValue.parse(response);
+		if (!(responseObj instanceof JSONObject))
+			// Unexpected response - try another server?
 			return null;
+
+		JSONObject responseJson = (JSONObject) responseObj;
+
+		Object errorObj = responseJson.get("error");
+		if (errorObj != null) {
+			if (errorObj instanceof String) {
+				LOGGER.debug(String.format("Unexpected error message from ElectrumX server %s for RPC method %s: %s", this.currentServer, method, (String) errorObj));
+				// Try another server
+				return null;
+			}
+
+			if (!(errorObj instanceof JSONObject)) {
+				LOGGER.debug(String.format("Unexpected error response from ElectrumX server %s for RPC method %s", this.currentServer, method));
+				// Try another server
+				return null;
+			}
+
+			JSONObject errorJson = (JSONObject) errorObj;
+
+			Object messageObj = errorJson.get("message");
+
+			if (!(messageObj instanceof String)) {
+				LOGGER.debug(String.format("Missing/invalid message in error response from ElectrumX server %s for RPC method %s", this.currentServer, method));
+				// Try another server
+				return null;
+			}
+
+			String message = (String) messageObj;
+
+			// Some error 'messages' are actually wrapped upstream bitcoind errors:
+			// "message": "daemon error: DaemonError({'code': -5, 'message': 'No such mempool or blockchain transaction. Use gettransaction for wallet transactions.'})"
+			// We want to detect these and extract the upstream error code for caller's use
+			Matcher messageMatcher = DAEMON_ERROR_REGEX.matcher(message);
+			if (messageMatcher.find())
+				try {
+					int daemonErrorCode = Integer.parseInt(messageMatcher.group(1));
+					throw new ForeignBlockchainException.NetworkException(daemonErrorCode, message, this.currentServer);
+				} catch (NumberFormatException e) {
+					// We couldn't parse the error code integer? Fall-through to generic exception...
+				}
+
+			throw new ForeignBlockchainException.NetworkException(message, this.currentServer);
+		}
 
 		return responseJson.get("result");
+	}
+
+	/**
+	 * Closes connection to <tt>server</tt> if it is currently connected server.
+	 * @param server
+	 */
+	private void closeServer(Server server) {
+		synchronized (this.serverLock) {
+			if (this.currentServer == null || !this.currentServer.equals(server))
+				return;
+
+			if (this.socket != null && !this.socket.isClosed())
+				try {
+					this.socket.close();
+				} catch (IOException e) {
+					// We did try...
+				}
+
+			this.socket = null;
+			this.scanner = null;
+			this.currentServer = null;
+		}
+	}
+
+	/** Closes connection to currently connected server (if any). */
+	private void closeServer() {
+		synchronized (this.serverLock) {
+			this.closeServer(this.currentServer);
+		}
 	}
 
 }

@@ -61,7 +61,7 @@ public class SysTray {
 		this.popupMenu = createJPopupMenu();
 
 		// Build TrayIcon without AWT PopupMenu (which doesn't support Unicode)...
-		this.trayIcon = new TrayIcon(Gui.loadImage("icons/icon32.png"), "qortal", null);
+		this.trayIcon = new TrayIcon(Gui.loadImage("icons/qortal_ui_tray_synced.png"), "qortal", null);
 		// ...and attach mouse listener instead so we can use JPopupMenu (which does support Unicode)
 		this.trayIcon.addMouseListener(new MouseAdapter() {
 			@Override
@@ -287,6 +287,29 @@ public class SysTray {
 	public void setToolTipText(String text) {
 		if (trayIcon != null)
 			this.trayIcon.setToolTip(text);
+	}
+
+	public void setTrayIcon(int iconid) {
+		if (trayIcon != null) {
+			try {
+				switch (iconid) {
+					case 1:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_syncing_time-alt.png"));
+						break;
+					case 2:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_minting.png"));
+						break;
+					case 3:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_syncing.png"));
+						break;
+					case 4:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_synced.png"));
+						break;
+				}
+			} catch (NullPointerException e) {
+				LOGGER.info("Unable to set tray icon");
+			}
+		}
 	}
 
 	public void dispose() {

@@ -6,11 +6,12 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.jetty.websocket.api.Session;
+import org.eclipse.jetty.websocket.api.WebSocketException;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketConnect;
+import org.eclipse.jetty.websocket.api.annotations.OnWebSocketError;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketMessage;
 import org.eclipse.jetty.websocket.api.annotations.WebSocket;
-import org.eclipse.jetty.websocket.servlet.WebSocketServlet;
 import org.eclipse.jetty.websocket.servlet.WebSocketServletFactory;
 import org.qortal.controller.ChatNotifier;
 import org.qortal.crypto.Crypto;
@@ -22,7 +23,7 @@ import org.qortal.repository.RepositoryManager;
 
 @WebSocket
 @SuppressWarnings("serial")
-public class ActiveChatsWebSocket extends WebSocketServlet implements ApiWebSocket {
+public class ActiveChatsWebSocket extends ApiWebSocket {
 
 	@Override
 	public void configure(WebSocketServletFactory factory) {
@@ -30,8 +31,9 @@ public class ActiveChatsWebSocket extends WebSocketServlet implements ApiWebSock
 	}
 
 	@OnWebSocketConnect
+	@Override
 	public void onWebSocketConnect(Session session) {
-		Map<String, String> pathParams = this.getPathParams(session, "/{address}");
+		Map<String, String> pathParams = getPathParams(session, "/{address}");
 
 		String address = pathParams.get("address");
 		if (address == null || !Crypto.isValidAddress(address)) {
@@ -48,12 +50,19 @@ public class ActiveChatsWebSocket extends WebSocketServlet implements ApiWebSock
 	}
 
 	@OnWebSocketClose
+	@Override
 	public void onWebSocketClose(Session session, int statusCode, String reason) {
 		ChatNotifier.getInstance().deregister(session);
 	}
 
+	@OnWebSocketError
+	public void onWebSocketError(Session session, Throwable throwable) {
+		/* ignored */
+	}
+
 	@OnWebSocketMessage
 	public void onWebSocketMessage(Session session, String message) {
+		/* ignored */
 	}
 
 	private void onNotify(Session session, ChatTransactionData chatTransactionData, String ourAddress, AtomicReference<String> previousOutput) {
@@ -70,7 +79,7 @@ public class ActiveChatsWebSocket extends WebSocketServlet implements ApiWebSock
 
 			StringWriter stringWriter = new StringWriter();
 
-			this.marshall(stringWriter, activeChats);
+			marshall(stringWriter, activeChats);
 
 			// Only output if something has changed
 			String output = stringWriter.toString();
@@ -78,8 +87,8 @@ public class ActiveChatsWebSocket extends WebSocketServlet implements ApiWebSock
 				return;
 
 			previousOutput.set(output);
-			session.getRemote().sendString(output);
-		} catch (DataException | IOException e) {
+			session.getRemote().sendStringByFuture(output);
+		} catch (DataException | IOException | WebSocketException e) {
 			// No output this time?
 		}
 	}

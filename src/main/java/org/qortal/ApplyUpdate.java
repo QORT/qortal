@@ -35,6 +35,8 @@ public class ApplyUpdate {
 	private static final String JAR_FILENAME = AutoUpdate.JAR_FILENAME;
 	private static final String NEW_JAR_FILENAME = AutoUpdate.NEW_JAR_FILENAME;
 	private static final String WINDOWS_EXE_LAUNCHER = "qortal.exe";
+	private static final String JAVA_TOOL_OPTIONS_NAME = "JAVA_TOOL_OPTIONS";
+	private static final String JAVA_TOOL_OPTIONS_VALUE = "-XX:MaxRAMFraction=4";
 
 	private static final long CHECK_INTERVAL = 10 * 1000L; // ms
 	private static final int MAX_ATTEMPTS = 12;
@@ -65,17 +67,19 @@ public class ApplyUpdate {
 	}
 
 	private static boolean shutdownNode() {
-		String BASE_URI = "http://localhost:" + Settings.getInstance().getApiPort() + "/";
-		LOGGER.info(String.format("Shutting down node using API via %s", BASE_URI));
+		String baseUri = "http://localhost:" + Settings.getInstance().getApiPort() + "/";
+		LOGGER.info(() -> String.format("Shutting down node using API via %s", baseUri));
 
 		int attempt;
 		for (attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
-			LOGGER.info(String.format("Attempt #%d out of %d to shutdown node", attempt + 1, MAX_ATTEMPTS));
-			String response = ApiRequest.perform(BASE_URI + "admin/stop", null);
+			final int attemptForLogging = attempt;
+			LOGGER.info(() -> String.format("Attempt #%d out of %d to shutdown node", attemptForLogging + 1, MAX_ATTEMPTS));
+			String response = ApiRequest.perform(baseUri + "admin/stop", null);
 			if (response == null)
-				break;
+				// No response - consider node shut down
+				return true;
 
-			LOGGER.info(String.format("Response from API: %s", response));
+			LOGGER.info(() -> String.format("Response from API: %s", response));
 
 			try {
 				Thread.sleep(CHECK_INTERVAL);
@@ -99,19 +103,20 @@ public class ApplyUpdate {
 		Path newJar = Paths.get(NEW_JAR_FILENAME);
 
 		if (!Files.exists(newJar)) {
-			LOGGER.warn(String.format("Replacement JAR '%s' not found?", newJar));
+			LOGGER.warn(() -> String.format("Replacement JAR '%s' not found?", newJar));
 			return;
 		}
 
 		int attempt;
 		for (attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
-			LOGGER.info(String.format("Attempt #%d out of %d to replace JAR", attempt + 1, MAX_ATTEMPTS));
+			final int attemptForLogging = attempt;
+			LOGGER.info(() -> String.format("Attempt #%d out of %d to replace JAR", attemptForLogging + 1, MAX_ATTEMPTS));
 
 			try {
 				Files.copy(newJar, realJar, StandardCopyOption.REPLACE_EXISTING);
 				break;
 			} catch (IOException e) {
-				LOGGER.info(String.format("Unable to replace JAR: %s", e.getMessage()));
+				LOGGER.info(() -> String.format("Unable to replace JAR: %s", e.getMessage()));
 
 				// Try again
 			}
@@ -119,6 +124,7 @@ public class ApplyUpdate {
 			try {
 				Thread.sleep(CHECK_INTERVAL);
 			} catch (InterruptedException e) {
+				LOGGER.warn("Ignoring interrupt...");
 				// Doggedly retry
 			}
 		}
@@ -129,13 +135,13 @@ public class ApplyUpdate {
 
 	private static void restartNode(String[] args) {
 		String javaHome = System.getProperty("java.home");
-		LOGGER.info(String.format("Java home: %s", javaHome));
+		LOGGER.info(() -> String.format("Java home: %s", javaHome));
 
 		Path javaBinary = Paths.get(javaHome, "bin", "java");
-		LOGGER.info(String.format("Java binary: %s", javaBinary));
+		LOGGER.info(() -> String.format("Java binary: %s", javaBinary));
 
 		Path exeLauncher = Paths.get(WINDOWS_EXE_LAUNCHER);
-		LOGGER.info(String.format("Windows EXE launcher: %s", exeLauncher));
+		LOGGER.info(() -> String.format("Windows EXE launcher: %s", exeLauncher));
 
 		List<String> javaCmd;
 		if (Files.exists(exeLauncher)) {
@@ -156,9 +162,16 @@ public class ApplyUpdate {
 		}
 
 		try {
-			LOGGER.info(String.format("Restarting node with: %s", String.join(" ", javaCmd)));
+			LOGGER.info(() -> String.format("Restarting node with: %s", String.join(" ", javaCmd)));
 
-			new ProcessBuilder(javaCmd).start();
+			ProcessBuilder processBuilder = new ProcessBuilder(javaCmd);
+
+			if (Files.exists(exeLauncher)) {
+				LOGGER.info(() -> String.format("Setting env %s to %s", JAVA_TOOL_OPTIONS_NAME, JAVA_TOOL_OPTIONS_VALUE));
+				processBuilder.environment().put(JAVA_TOOL_OPTIONS_NAME, JAVA_TOOL_OPTIONS_VALUE);
+			}
+
+			processBuilder.start();
 		} catch (IOException e) {
 			LOGGER.error(String.format("Failed to restart node (BAD): %s", e.getMessage()));
 		}

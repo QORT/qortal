@@ -13,7 +13,7 @@ fi
 cd ${git_dir}
 
 # Check we are in 'master' branch
-branch_name=$( git symbolic-ref -q HEAD )
+branch_name=$( git symbolic-ref -q HEAD || echo )
 branch_name=${branch_name##refs/heads/}
 echo "Current git branch: ${branch_name}"
 if [ "${branch_name}" != "master" ]; then
@@ -77,6 +77,8 @@ git add ${project}.update
 
 git commit --message "XORed, auto-update JAR based on commit ${short_hash}"
 git push --set-upstream origin --force-with-lease ${update_branch}
+
+branch_name=${branch_name-master}
 
 echo "Changing back to '${branch_name}' branch"
 git checkout --force ${branch_name}

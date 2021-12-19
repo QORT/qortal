@@ -121,7 +121,7 @@ public class RewardShareTests extends Common {
 			Transaction transaction = Transaction.fromData(repository, transactionData);
 
 			ValidationResult validationResult = transaction.isValidUnconfirmed();
-			assertEquals("Initial 0% share should be invalid", ValidationResult.INVALID_REWARD_SHARE_PERCENT, validationResult);
+			assertNotSame("Creating reward-share with 'cancel' share-percent should be invalid", ValidationResult.OK, validationResult);
 		}
 	}
 

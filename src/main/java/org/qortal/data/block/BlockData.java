@@ -79,6 +79,25 @@ public class BlockData implements Serializable {
 				null, 0, null, null);
 	}
 
+	public BlockData(BlockData other) {
+		this.version = other.version;
+		this.reference = other.reference;
+		this.transactionCount = other.transactionCount;
+		this.totalFees = other.totalFees;
+		this.transactionsSignature = other.transactionsSignature;
+		this.height = other.height;
+		this.timestamp = other.timestamp;
+		this.minterPublicKey = other.minterPublicKey;
+		this.minterSignature = other.minterSignature;
+		this.atCount = other.atCount;
+		this.atFees = other.atFees;
+		this.encodedOnlineAccounts = other.encodedOnlineAccounts;
+		this.onlineAccountsCount = other.onlineAccountsCount;
+		this.onlineAccountsTimestamp = other.onlineAccountsTimestamp;
+		this.onlineAccountsSignatures = other.onlineAccountsSignatures;
+		this.signature = other.signature;
+	}
+
 	// Getters/setters
 
 	public byte[] getSignature() {
@@ -183,6 +202,10 @@ public class BlockData implements Serializable {
 
 	public byte[] getOnlineAccountsSignatures() {
 		return this.onlineAccountsSignatures;
+	}
+
+	public void setOnlineAccountsSignatures(byte[] onlineAccountsSignatures) {
+		this.onlineAccountsSignatures = onlineAccountsSignatures;
 	}
 
 	// JAXB special

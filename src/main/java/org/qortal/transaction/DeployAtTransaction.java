@@ -26,45 +26,47 @@ import com.google.common.base.Utf8;
 public class DeployAtTransaction extends Transaction {
 
 	// Properties
-	private DeployAtTransactionData deployATTransactionData;
+	private DeployAtTransactionData deployAtTransactionData;
 
 	// Other useful constants
 	public static final int MAX_NAME_SIZE = 200;
 	public static final int MAX_DESCRIPTION_SIZE = 2000;
 	public static final int MAX_AT_TYPE_SIZE = 200;
 	public static final int MAX_TAGS_SIZE = 200;
-	public static final int MAX_CREATION_BYTES_SIZE = 100_000;
+	public static final int MAX_CREATION_BYTES_SIZE = 4096;
+	public static final int MAX_CODE_BYTES_LENGTH = 1024;
+	public static final int MAX_AT_STATE_LENGTH = 1024;
 
 	// Constructors
 
 	public DeployAtTransaction(Repository repository, TransactionData transactionData) {
 		super(repository, transactionData);
 
-		this.deployATTransactionData = (DeployAtTransactionData) this.transactionData;
+		this.deployAtTransactionData = (DeployAtTransactionData) this.transactionData;
 	}
 
 	// More information
 
 	@Override
 	public List<String> getRecipientAddresses() throws DataException {
-		return Collections.singletonList(this.deployATTransactionData.getAtAddress());
+		return Collections.singletonList(this.deployAtTransactionData.getAtAddress());
 	}
 
 	/** Returns AT version from the header bytes */
 	private short getVersion() {
-		byte[] creationBytes = deployATTransactionData.getCreationBytes();
+		byte[] creationBytes = deployAtTransactionData.getCreationBytes();
 		return (short) ((creationBytes[0] << 8) | (creationBytes[1] & 0xff)); // Big-endian
 	}
 
 	/** Make sure deployATTransactionData has an ATAddress */
-	private void ensureATAddress() throws DataException {
-		if (this.deployATTransactionData.getAtAddress() != null)
+	public static void ensureATAddress(DeployAtTransactionData deployAtTransactionData) throws DataException {
+		if (deployAtTransactionData.getAtAddress() != null)
 			return;
 
 		// Use transaction transformer
 		try {
-			String atAddress = Crypto.toATAddress(TransactionTransformer.toBytesForSigning(this.deployATTransactionData));
-			this.deployATTransactionData.setAtAddress(atAddress);
+			String atAddress = Crypto.toATAddress(TransactionTransformer.toBytesForSigning(deployAtTransactionData));
+			deployAtTransactionData.setAtAddress(atAddress);
 		} catch (TransformationException e) {
 			throw new DataException("Unable to generate AT address");
 		}
@@ -73,9 +75,9 @@ public class DeployAtTransaction extends Transaction {
 	// Navigation
 
 	public Account getATAccount() throws DataException {
-		ensureATAddress();
+		ensureATAddress(this.deployAtTransactionData);
 
-		return new Account(this.repository, this.deployATTransactionData.getAtAddress());
+		return new Account(this.repository, this.deployAtTransactionData.getAtAddress());
 	}
 
 	// Processing
@@ -83,30 +85,30 @@ public class DeployAtTransaction extends Transaction {
 	@Override
 	public ValidationResult isValid() throws DataException {
 		// Check name size bounds
-		int nameLength = Utf8.encodedLength(this.deployATTransactionData.getName());
+		int nameLength = Utf8.encodedLength(this.deployAtTransactionData.getName());
 		if (nameLength < 1 || nameLength > MAX_NAME_SIZE)
 			return ValidationResult.INVALID_NAME_LENGTH;
 
 		// Check description size bounds
-		int descriptionlength = Utf8.encodedLength(this.deployATTransactionData.getDescription());
+		int descriptionlength = Utf8.encodedLength(this.deployAtTransactionData.getDescription());
 		if (descriptionlength < 1 || descriptionlength > MAX_DESCRIPTION_SIZE)
 			return ValidationResult.INVALID_DESCRIPTION_LENGTH;
 
 		// Check AT-type size bounds
-		int atTypeLength = Utf8.encodedLength(this.deployATTransactionData.getAtType());
+		int atTypeLength = Utf8.encodedLength(this.deployAtTransactionData.getAtType());
 		if (atTypeLength < 1 || atTypeLength > MAX_AT_TYPE_SIZE)
 			return ValidationResult.INVALID_AT_TYPE_LENGTH;
 
 		// Check tags size bounds
-		int tagsLength = Utf8.encodedLength(this.deployATTransactionData.getTags());
+		int tagsLength = Utf8.encodedLength(this.deployAtTransactionData.getTags());
 		if (tagsLength < 1 || tagsLength > MAX_TAGS_SIZE)
 			return ValidationResult.INVALID_TAGS_LENGTH;
 
 		// Check amount is positive
-		if (this.deployATTransactionData.getAmount() <= 0)
+		if (this.deployAtTransactionData.getAmount() <= 0)
 			return ValidationResult.NEGATIVE_AMOUNT;
 
-		long assetId = this.deployATTransactionData.getAssetId();
+		long assetId = this.deployAtTransactionData.getAssetId();
 		AssetData assetData = this.repository.getAssetRepository().fromAssetId(assetId);
 		// Check asset even exists
 		if (assetData == null)
@@ -117,7 +119,7 @@ public class DeployAtTransaction extends Transaction {
 			return ValidationResult.ASSET_NOT_SPENDABLE;
 
 		// Check asset amount is integer if asset is not divisible
-		if (!assetData.isDivisible() && this.deployATTransactionData.getAmount() % Amounts.MULTIPLIER != 0)
+		if (!assetData.isDivisible() && this.deployAtTransactionData.getAmount() % Amounts.MULTIPLIER != 0)
 			return ValidationResult.INVALID_AMOUNT;
 
 		Account creator = this.getCreator();
@@ -125,15 +127,15 @@ public class DeployAtTransaction extends Transaction {
 		// Check creator has enough funds
 		if (assetId == Asset.QORT) {
 			// Simple case: amount and fee both in QORT
-			long minimumBalance = this.deployATTransactionData.getFee() + this.deployATTransactionData.getAmount();
+			long minimumBalance = this.deployAtTransactionData.getFee() + this.deployAtTransactionData.getAmount();
 
 			if (creator.getConfirmedBalance(Asset.QORT) < minimumBalance)
 				return ValidationResult.NO_BALANCE;
 		} else {
-			if (creator.getConfirmedBalance(Asset.QORT) < this.deployATTransactionData.getFee())
+			if (creator.getConfirmedBalance(Asset.QORT) < this.deployAtTransactionData.getFee())
 				return ValidationResult.NO_BALANCE;
 
-			if (creator.getConfirmedBalance(assetId) < this.deployATTransactionData.getAmount())
+			if (creator.getConfirmedBalance(assetId) < this.deployAtTransactionData.getAmount())
 				return ValidationResult.NO_BALANCE;
 		}
 
@@ -142,12 +144,12 @@ public class DeployAtTransaction extends Transaction {
 			return ValidationResult.INVALID_CREATION_BYTES;
 
 		// Check creation bytes are valid (for v2+)
-		this.ensureATAddress();
+		ensureATAddress(this.deployAtTransactionData);
 
 		// Just enough AT data to allow API to query initial balances, etc.
-		String atAddress = this.deployATTransactionData.getAtAddress();
-		byte[] creatorPublicKey = this.deployATTransactionData.getCreatorPublicKey();
-		long creation = this.deployATTransactionData.getTimestamp();
+		String atAddress = this.deployAtTransactionData.getAtAddress();
+		byte[] creatorPublicKey = this.deployAtTransactionData.getCreatorPublicKey();
+		long creation = this.deployAtTransactionData.getTimestamp();
 		ATData skeletonAtData = new ATData(atAddress, creatorPublicKey, creation, assetId);
 
 		int height = this.repository.getBlockRepository().getBlockchainHeight() + 1;
@@ -157,7 +159,15 @@ public class DeployAtTransaction extends Transaction {
 		QortalAtLoggerFactory loggerFactory = QortalAtLoggerFactory.getInstance();
 
 		try {
-			new MachineState(api, loggerFactory, this.deployATTransactionData.getCreationBytes());
+			MachineState state = new MachineState(api, loggerFactory, this.deployAtTransactionData.getCreationBytes());
+
+			byte[] codeBytes = state.getCodeBytes();
+			if (codeBytes == null || codeBytes.length > MAX_CODE_BYTES_LENGTH)
+				return ValidationResult.INVALID_CREATION_BYTES;
+
+			byte[] atStateBytes = state.toBytes();
+			if (atStateBytes == null || atStateBytes.length > MAX_AT_STATE_LENGTH)
+				return ValidationResult.INVALID_CREATION_BYTES;
 		} catch (IllegalArgumentException e) {
 			// Not valid
 			return ValidationResult.INVALID_CREATION_BYTES;
@@ -169,66 +179,71 @@ public class DeployAtTransaction extends Transaction {
 	@Override
 	public ValidationResult isProcessable() throws DataException {
 		Account creator = getCreator();
-		long assetId = this.deployATTransactionData.getAssetId();
+		long assetId = this.deployAtTransactionData.getAssetId();
 
 		// Check creator has enough funds
 		if (assetId == Asset.QORT) {
 			// Simple case: amount and fee both in QORT
-			long minimumBalance = this.deployATTransactionData.getFee() + this.deployATTransactionData.getAmount();
+			long minimumBalance = this.deployAtTransactionData.getFee() + this.deployAtTransactionData.getAmount();
 
 			if (creator.getConfirmedBalance(Asset.QORT) < minimumBalance)
 				return ValidationResult.NO_BALANCE;
 		} else {
-			if (creator.getConfirmedBalance(Asset.QORT) < this.deployATTransactionData.getFee())
+			if (creator.getConfirmedBalance(Asset.QORT) < this.deployAtTransactionData.getFee())
 				return ValidationResult.NO_BALANCE;
 
-			if (creator.getConfirmedBalance(assetId) < this.deployATTransactionData.getAmount())
+			if (creator.getConfirmedBalance(assetId) < this.deployAtTransactionData.getAmount())
 				return ValidationResult.NO_BALANCE;
 		}
 
 		// Check AT doesn't already exist
-		if (this.repository.getATRepository().exists(this.deployATTransactionData.getAtAddress()))
+		if (this.repository.getATRepository().exists(this.deployAtTransactionData.getAtAddress()))
 			return ValidationResult.AT_ALREADY_EXISTS;
 
 		return ValidationResult.OK;
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
-		this.ensureATAddress();
+		ensureATAddress(this.deployAtTransactionData);
 
 		// Deploy AT, saving into repository
-		AT at = new AT(this.repository, this.deployATTransactionData);
+		AT at = new AT(this.repository, this.deployAtTransactionData);
 		at.deploy();
 
-		long assetId = this.deployATTransactionData.getAssetId();
+		long assetId = this.deployAtTransactionData.getAssetId();
 
 		// Update creator's balance regarding initial payment to AT
 		Account creator = getCreator();
-		creator.modifyAssetBalance(assetId, - this.deployATTransactionData.getAmount());
+		creator.modifyAssetBalance(assetId, - this.deployAtTransactionData.getAmount());
 
 		// Update AT's reference, which also creates AT account
 		Account atAccount = this.getATAccount();
-		atAccount.setLastReference(this.deployATTransactionData.getSignature());
+		atAccount.setLastReference(this.deployAtTransactionData.getSignature());
 
 		// Update AT's balance
-		atAccount.setConfirmedBalance(assetId, this.deployATTransactionData.getAmount());
+		atAccount.setConfirmedBalance(assetId, this.deployAtTransactionData.getAmount());
 	}
 
 	@Override
 	public void orphan() throws DataException {
 		// Delete AT from repository
-		AT at = new AT(this.repository, this.deployATTransactionData);
+		AT at = new AT(this.repository, this.deployAtTransactionData);
 		at.undeploy();
 
-		long assetId = this.deployATTransactionData.getAssetId();
+		long assetId = this.deployAtTransactionData.getAssetId();
 
 		// Update creator's balance regarding initial payment to AT
 		Account creator = getCreator();
-		creator.modifyAssetBalance(assetId, this.deployATTransactionData.getAmount());
+		creator.modifyAssetBalance(assetId, this.deployAtTransactionData.getAmount());
 
 		// Delete AT's account (and hence its balance)
-		this.repository.getAccountRepository().delete(this.deployATTransactionData.getAtAddress());
+		this.repository.getAccountRepository().delete(this.deployAtTransactionData.getAtAddress());
 	}
 
 }

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+# Requires: 'qort' script in PATH, and 'jq' utility installed
+
+set -e
+
+# Any extra args passed to us are also passed to 'qort', just prior to '-p peers'
+qort $@ -p peers | \
+	jq -r 'def lpad($len):
+			tostring | ($len - length) as $l | (" " * $l)[:$l] + .;
+		.[] |
+			select(has("lastHeight")) |
+			"\(.address | lpad(22)) (\(.version)), height \(.lastHeight), sig: \(.lastBlockSignature[0:8]), ts \(.lastBlockTimestamp / 1e3 | strftime("%Y-%m-%d %H:%M:%S"))"'

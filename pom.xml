@@ -3,21 +3,25 @@
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>org.qortal</groupId>
 	<artifactId>qortal</artifactId>
-	<version>1.2.2</version>
+	<version>2.1.2</version>
 	<packaging>jar</packaging>
 	<properties>
-		<bitcoinj.version>0.15.5</bitcoinj.version>
+		<skipTests>true</skipTests>
+		<altcoinj.version>bf9fb80</altcoinj.version>
+		<bitcoinj.version>0.15.10</bitcoinj.version>
 		<bouncycastle.version>1.64</bouncycastle.version>
 		<build.timestamp>${maven.build.timestamp}</build.timestamp>
-		<ciyam-at.version>1.3.4</ciyam-at.version>
+		<ciyam-at.version>1.3.8</ciyam-at.version>
 		<commons-net.version>3.6</commons-net.version>
 		<commons-text.version>1.8</commons-text.version>
+		<commons-io.version>2.6</commons-io.version>
+		<commons-compress.version>1.21</commons-compress.version>
+		<xz.version>1.9</xz.version>
 		<dagger.version>1.2.2</dagger.version>
 		<guava.version>28.1-jre</guava.version>
-		<hsqldb.version>2.5.0-fixed</hsqldb.version>
-		<hsqldb-sqltool.version>2.5.0</hsqldb-sqltool.version>
+		<hsqldb.version>2.5.1</hsqldb.version>
 		<jersey.version>2.29.1</jersey.version>
-		<jetty.version>9.4.22.v20191022</jetty.version>
+		<jetty.version>9.4.29.v20200521</jetty.version>
 		<log4j.version>2.12.1</log4j.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<slf4j.version>1.7.12</slf4j.version>
@@ -199,6 +203,10 @@
 							<pattern>org.qortal.api.model**</pattern>
 							<template>${project.build.sourceDirectory}/org/qortal/data/package-info.java</template>
 						</package>
+						<package>
+							<pattern>org.qortal.api.model.**</pattern>
+							<template>${project.build.sourceDirectory}/org/qortal/data/package-info.java</template>
+						</package>
 					</packages>
 					<outputDirectory>${project.build.directory}/generated-sources/package-info</outputDirectory>
 				</configuration>
@@ -313,6 +321,14 @@
 					</execution>
 				</executions>
 			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>2.22.2</version>
+				<configuration>
+					<skipTests>${skipTests}</skipTests>
+				</configuration>
+			</plugin>
 		</plugins>
 		<pluginManagement>
 			<plugins>
@@ -375,6 +391,11 @@
 			<name>project</name>
 			<url>file:${project.basedir}/lib</url>
 		</repository>
+		<!-- jitpack for build-on-demand of altcoinj -->
+		<repository>
+			<id>jitpack.io</id>
+			<url>https://jitpack.io</url>
+		</repository>
 	</repositories>
 	<dependencies>
 		<!-- https://mvnrepository.com/artifact/org.codehaus.mojo/build-helper-maven-plugin -->
@@ -397,12 +418,6 @@
 			<artifactId>hsqldb</artifactId>
 			<version>${hsqldb.version}</version>
 		</dependency>
-		<dependency>
-			<groupId>org.hsqldb</groupId>
-			<artifactId>sqltool</artifactId>
-			<version>${hsqldb-sqltool.version}</version>
-			<scope>test</scope>
-		</dependency>
 		<!-- CIYAM AT (automated transactions) -->
 		<dependency>
 			<groupId>org.ciyam</groupId>
@@ -415,6 +430,12 @@
 			<artifactId>bitcoinj-core</artifactId>
 			<version>${bitcoinj.version}</version>
 		</dependency>
+		<!-- For Litecoin, etc. support, requires bitcoinj -->
+		<dependency>
+			<groupId>com.github.jjos2372</groupId>
+			<artifactId>altcoinj</artifactId>
+			<version>${altcoinj.version}</version>
+		</dependency>
 		<!-- Utilities -->
 		<dependency>
 			<groupId>com.googlecode.json-simple</groupId>
@@ -422,9 +443,29 @@
 			<version>1.1.1</version>
 		</dependency>
 		<dependency>
+			<groupId>org.json</groupId>
+			<artifactId>json</artifactId>
+			<version>20210307</version>
+		</dependency>
+		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-text</artifactId>
 			<version>${commons-text.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>commons-io</groupId>
+			<artifactId>commons-io</artifactId>
+			<version>${commons-io.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-compress</artifactId>
+			<version>${commons-compress.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.tukaani</groupId>
+			<artifactId>xz</artifactId>
+			<version>${xz.version}</version>
 		</dependency>
 		<!--  For bitset/bitmap compression -->
 		<dependency>

@@ -510,14 +510,19 @@ public class TransactionsResource {
 		if (!Controller.getInstance().isUpToDate())
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.BLOCKCHAIN_NEEDS_SYNC);
 
+		byte[] rawBytes = Base58.decode(rawBytes58);
+
+		TransactionData transactionData;
+		try {
+			transactionData = TransactionTransformer.fromBytes(rawBytes);
+		} catch (TransformationException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.TRANSFORMATION_ERROR, e);
+		}
+
+		if (transactionData == null)
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
+
 		try (final Repository repository = RepositoryManager.getRepository()) {
-			byte[] rawBytes = Base58.decode(rawBytes58);
-
-			TransactionData transactionData = TransactionTransformer.fromBytes(rawBytes);
-
-			if (transactionData == null)
-				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
-
 			Transaction transaction = Transaction.fromData(repository, transactionData);
 
 			if (!transaction.isSignatureValid())
@@ -535,16 +540,9 @@ public class TransactionsResource {
 				blockchainLock.unlock();
 			}
 
-			// Notify controller of new transaction
-			Controller.getInstance().onNewTransaction(transactionData, null);
-
 			return "true";
 		} catch (NumberFormatException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA, e);
-		} catch (TransformationException e) {
-			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.TRANSFORMATION_ERROR, e);
-		} catch (ApiException e) {
-			throw e;
 		} catch (DataException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
 		} catch (InterruptedException e) {

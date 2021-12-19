@@ -2,7 +2,7 @@ package org.qortal.api;
 
 import javax.xml.bind.annotation.adapters.XmlAdapter;
 
-import org.bitcoinj.core.Base58;
+import org.qortal.utils.Base58;
 
 public class Base58TypeAdapter extends XmlAdapter<String, byte[]> {
 

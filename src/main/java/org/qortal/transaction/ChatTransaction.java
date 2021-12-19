@@ -11,6 +11,7 @@ import org.qortal.crypto.MemoryPoW;
 import org.qortal.data.transaction.ChatTransactionData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.group.Group;
+import org.qortal.list.ResourceListManager;
 import org.qortal.repository.DataException;
 import org.qortal.repository.GroupRepository;
 import org.qortal.repository.Repository;
@@ -135,13 +136,24 @@ public class ChatTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public ValidationResult isValid() throws DataException {
 		// Nonce checking is done via isSignatureValid() as that method is only called once per import
+
+		// Check for blacklisted author by address
+		ResourceListManager listManager = ResourceListManager.getInstance();
+		if (listManager.listContains("blacklist", "address", this.chatTransactionData.getSender())) {
+			return ValidationResult.ADDRESS_IN_BLACKLIST;
+		}
 
 		// If we exist in the repository then we've been imported as unconfirmed,
 		// but we don't want to make it into a block, so return fake non-OK result.
 		if (this.repository.getTransactionRepository().exists(this.chatTransactionData.getSignature()))
-			return ValidationResult.CHAT;
+			return ValidationResult.INVALID_BUT_OK;
 
 		// If we have a recipient, check it is a valid address
 		String recipientAddress = chatTransactionData.getRecipient();
@@ -186,6 +198,16 @@ public class ChatTransaction extends Transaction {
 
 		// Check nonce
 		return MemoryPoW.verify2(transactionBytes, POW_BUFFER_SIZE, difficulty, nonce);
+	}
+
+	/**
+	 * Ensure there's at least a skeleton account so people
+	 * can retrieve sender's public key using address, even if all their messages
+	 * expire.
+	 */
+	@Override
+	protected void onImportAsUnconfirmed() throws DataException {
+		this.getCreator().ensureAccount();
 	}
 
 	@Override

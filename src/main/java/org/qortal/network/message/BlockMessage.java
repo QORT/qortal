@@ -34,6 +34,7 @@ public class BlockMessage extends Message {
 		super(MessageType.BLOCK);
 
 		this.block = block;
+		this.blockData = block.getBlockData();
 		this.height = block.getBlockData().getHeight();
 	}
 
@@ -91,6 +92,12 @@ public class BlockMessage extends Message {
 		} catch (TransformationException | IOException e) {
 			return null;
 		}
+	}
+
+	public BlockMessage cloneWithNewId(int newId) {
+		BlockMessage clone = new BlockMessage(this.block);
+		clone.setId(newId);
+		return clone;
 	}
 
 }

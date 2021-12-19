@@ -62,6 +62,11 @@ public class TransferAssetTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Wrap asset transfer as a payment and delegate processing to Payment class.
 		new Payment(this.repository).process(this.transferAssetTransactionData.getSenderPublicKey(), getPaymentData());

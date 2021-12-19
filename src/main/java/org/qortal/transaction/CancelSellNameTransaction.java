@@ -80,6 +80,11 @@ public class CancelSellNameTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Update Name
 		Name name = new Name(this.repository, cancelSellNameTransactionData.getName());

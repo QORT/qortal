@@ -7,6 +7,7 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import java.util.List;
@@ -156,6 +157,7 @@ public class ChatResource {
 		}
 	)
 	@ApiErrors({ApiError.TRANSACTION_INVALID, ApiError.TRANSFORMATION_ERROR, ApiError.REPOSITORY_ISSUE})
+	@SecurityRequirement(name = "apiKey")
 	public String buildChat(ChatTransactionData transactionData) {
 		Security.checkApiCallAllowed(request);
 
@@ -203,6 +205,7 @@ public class ChatResource {
 		}
 	)
 	@ApiErrors({ApiError.TRANSACTION_INVALID, ApiError.INVALID_DATA, ApiError.TRANSFORMATION_ERROR, ApiError.REPOSITORY_ISSUE})
+	@SecurityRequirement(name = "apiKey")
 	public String buildChat(String rawBytes58) {
 		Security.checkApiCallAllowed(request);
 

@@ -1,0 +1,75 @@
+{
+	"isTestChain": true,
+	"blockTimestampMargin": 500,
+	"transactionExpiryPeriod": 86400000,
+	"maxBlockSize": 2097152,
+	"maxBytesPerUnitFee": 1024,
+	"unitFee": "0.1",
+	"requireGroupForApproval": false,
+	"minAccountLevelToRewardShare": 5,
+	"maxRewardSharesPerMintingAccount": 20,
+	"founderEffectiveMintingLevel": 10,
+	"onlineAccountSignaturesMinLifetime": 3600000,
+	"onlineAccountSignaturesMaxLifetime": 86400000,
+	"rewardsByHeight": [
+		{ "height": 1, "reward": 100 },
+		{ "height": 11, "reward": 10 },
+		{ "height": 21, "reward": 1 }
+	],
+	"sharesByLevel": [
+		{ "levels": [ 1, 2 ], "share": 0.05 },
+		{ "levels": [ 3, 4 ], "share": 0.10 },
+		{ "levels": [ 5, 6 ], "share": 0.15 },
+		{ "levels": [ 7, 8 ], "share": 0.20 },
+		{ "levels": [ 9, 10 ], "share": 0.25 }
+	],
+	"qoraHoldersShare": 0.20,
+	"qoraPerQortReward": 250,
+	"blocksNeededByLevel": [ 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 ],
+	"blockTimingsByHeight": [
+		{ "height": 1, "target": 60000, "deviation": 30000, "power": 0.2 }
+	],
+	"ciyamAtSettings": {
+		"feePerStep": "0.0001",
+		"maxStepsPerRound": 500,
+		"stepsPerFunctionCall": 10,
+		"minutesPerBlock": 1
+	},
+	"featureTriggers": {
+		"messageHeight": 0,
+		"atHeight": 0,
+		"assetsTimestamp": 0,
+		"votingTimestamp": 0,
+		"arbitraryTimestamp": 0,
+		"powfixTimestamp": 0,
+		"qortalTimestamp": 0,
+		"newAssetPricingTimestamp": 0,
+		"groupApprovalTimestamp": 0,
+		"atFindNextTransactionFix": 0,
+		"newBlockSigHeight": 999999,
+		"shareBinFix": 6,
+		"calcChainWeightTimestamp": 0
+	},
+	"genesisInfo": {
+		"version": 4,
+		"timestamp": 0,
+		"transactions": [
+			{ "type": "ISSUE_ASSET", "assetName": "QORT", "description": "QORT native coin", "data": "", "quantity": 0, "isDivisible": true, "fee": 0 },
+			{ "type": "ISSUE_ASSET", "assetName": "Legacy-QORA", "description": "Representative legacy QORA", "quantity": 0, "isDivisible": true, "data": "{}", "isUnspendable": true },
+			{ "type": "ISSUE_ASSET", "assetName": "QORT-from-QORA", "description": "QORT gained from holding legacy QORA", "quantity": 0, "isDivisible": true, "data": "{}", "isUnspendable": true },
+
+			{ "type": "GENESIS", "recipient": "QgV4s3xnzLhVBEJxcYui4u4q11yhUHsd9v", "amount": "1000000000" },
+			{ "type": "GENESIS", "recipient": "QixPbJUwsaHsVEofJdozU9zgVqkK6aYhrK", "amount": "1000000" },
+			{ "type": "GENESIS", "recipient": "QaUpHNhT3Ygx6avRiKobuLdusppR5biXjL", "amount": "1000000" },
+			{ "type": "GENESIS", "recipient": "Qci5m9k4rcwe4ruKrZZQKka4FzUUMut3er", "amount": "1000000" },
+
+			{ "type": "ACCOUNT_FLAGS", "target": "QgV4s3xnzLhVBEJxcYui4u4q11yhUHsd9v", "andMask": -1, "orMask": 1, "xorMask": 0 },
+			{ "type": "REWARD_SHARE", "minterPublicKey": "2tiMr5LTpaWCgbRvkPK8TFd7k63DyHJMMFFsz9uBf1ZP", "recipient": "QgV4s3xnzLhVBEJxcYui4u4q11yhUHsd9v", "rewardSharePublicKey": "7PpfnvLSG7y4HPh8hE7KoqAjLCkv7Ui6xw4mKAkbZtox", "sharePercent": 100 },
+
+			{ "type": "ACCOUNT_LEVEL", "target": "QgV4s3xnzLhVBEJxcYui4u4q11yhUHsd9v", "level": 1 },
+			{ "type": "ACCOUNT_LEVEL", "target": "QixPbJUwsaHsVEofJdozU9zgVqkK6aYhrK", "level": 1 },
+			{ "type": "ACCOUNT_LEVEL", "target": "QaUpHNhT3Ygx6avRiKobuLdusppR5biXjL", "level": 1 },
+			{ "type": "ACCOUNT_LEVEL", "target": "Qci5m9k4rcwe4ruKrZZQKka4FzUUMut3er", "level": 2 }
+		]
+	}
+}

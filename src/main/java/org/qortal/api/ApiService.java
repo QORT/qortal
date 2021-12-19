@@ -14,13 +14,15 @@ import java.security.SecureRandom;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.rewrite.handler.RedirectPatternRule;
 import org.eclipse.jetty.rewrite.handler.RewriteHandler;
 import org.eclipse.jetty.server.CustomRequestLog;
+import org.eclipse.jetty.server.DetectorConnectionFactory;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;
-import org.eclipse.jetty.server.OptionalSslConnectionFactory;
 import org.eclipse.jetty.server.RequestLog;
 import org.eclipse.jetty.server.RequestLogWriter;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
@@ -43,9 +45,14 @@ import org.qortal.api.websocket.ActiveChatsWebSocket;
 import org.qortal.api.websocket.AdminStatusWebSocket;
 import org.qortal.api.websocket.BlocksWebSocket;
 import org.qortal.api.websocket.ChatMessagesWebSocket;
+import org.qortal.api.websocket.PresenceWebSocket;
+import org.qortal.api.websocket.TradeBotWebSocket;
+import org.qortal.api.websocket.TradeOffersWebSocket;
 import org.qortal.settings.Settings;
 
 public class ApiService {
+
+	private static final Logger LOGGER = LogManager.getLogger(ApiService.class);
 
 	private static ApiService instance;
 
@@ -113,8 +120,7 @@ public class ApiService {
 				SslConnectionFactory sslConnectionFactory = new SslConnectionFactory(sslContextFactory, HttpVersion.HTTP_1_1.asString());
 
 				ServerConnector portUnifiedConnector = new ServerConnector(this.server,
-						new OptionalSslConnectionFactory(sslConnectionFactory, HttpVersion.HTTP_1_1.asString()),
-						sslConnectionFactory,
+						new DetectorConnectionFactory(sslConnectionFactory),
 						httpConnectionFactory);
 				portUnifiedConnector.setHost(Settings.getInstance().getBindAddress());
 				portUnifiedConnector.setPort(Settings.getInstance().getApiPort());
@@ -197,6 +203,12 @@ public class ApiService {
 			context.addServlet(BlocksWebSocket.class, "/websockets/blocks");
 			context.addServlet(ActiveChatsWebSocket.class, "/websockets/chat/active/*");
 			context.addServlet(ChatMessagesWebSocket.class, "/websockets/chat/messages");
+			context.addServlet(TradeOffersWebSocket.class, "/websockets/crosschain/tradeoffers");
+			context.addServlet(TradeBotWebSocket.class, "/websockets/crosschain/tradebot");
+			context.addServlet(PresenceWebSocket.class, "/websockets/presence");
+
+			// Warn about API security if needed
+			this.checkApiSecurity();
 
 			// Start server
 			this.server.start();
@@ -215,6 +227,25 @@ public class ApiService {
 		}
 
 		this.server = null;
+	}
+
+	private void checkApiSecurity() {
+		// Warn about API security if needed
+		boolean allConnectionsAllowed = false;
+		if (Settings.getInstance().isApiKeyDisabled()) {
+			for (String pattern : Settings.getInstance().getApiWhitelist()) {
+				if (pattern.startsWith("0.0.0.0/") || pattern.startsWith("::/") || pattern.endsWith("/0")) {
+					allConnectionsAllowed = true;
+				}
+			}
+
+			if (allConnectionsAllowed) {
+				LOGGER.warn("Warning: API key validation is currently disabled, and the API whitelist " +
+						"is allowing all connections. This can be a security risk.");
+				LOGGER.warn("To fix, set the apiKeyDisabled setting to false, or allow only specific local " +
+						"IP addresses using the apiWhitelist setting.");
+			}
+		}
 	}
 
 }

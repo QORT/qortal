@@ -29,6 +29,10 @@ public class MemoryPoW {
 		do {
 			++nonce;
 
+			// If we've been interrupted, exit fast with invalid value
+			if (Thread.currentThread().isInterrupted())
+				return -1;
+
 			seed *= seedMultiplier; // per nonce
 
 			state[0] = longHash[0] ^ seed;

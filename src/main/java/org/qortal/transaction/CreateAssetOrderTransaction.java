@@ -136,6 +136,11 @@ public class CreateAssetOrderTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Order Id is transaction's signature
 		byte[] orderId = this.createOrderTransactionData.getSignature();

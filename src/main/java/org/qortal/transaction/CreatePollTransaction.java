@@ -107,6 +107,11 @@ public class CreatePollTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Publish poll to allow voting
 		Poll poll = new Poll(this.repository, this.createPollTransactionData);

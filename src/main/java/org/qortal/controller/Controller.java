@@ -2,27 +2,40 @@ package org.qortal.controller;
 
 import java.awt.TrayIcon.MessageType;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -34,9 +47,11 @@ import org.qortal.account.PublicKeyAccount;
 import org.qortal.api.ApiService;
 import org.qortal.block.Block;
 import org.qortal.block.BlockChain;
-import org.qortal.block.BlockMinter;
 import org.qortal.block.BlockChain.BlockTimingByHeight;
 import org.qortal.controller.Synchronizer.SynchronizationResult;
+import org.qortal.controller.repository.PruneManager;
+import org.qortal.controller.repository.NamesDatabaseIntegrityCheck;
+import org.qortal.controller.tradebot.TradeBot;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.account.MintingAccountData;
 import org.qortal.data.account.RewardShareData;
@@ -48,6 +63,8 @@ import org.qortal.data.network.PeerData;
 import org.qortal.data.transaction.ArbitraryTransactionData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.data.transaction.ArbitraryTransactionData.DataType;
+import org.qortal.event.Event;
+import org.qortal.event.EventBus;
 import org.qortal.data.transaction.ChatTransactionData;
 import org.qortal.globalization.Translator;
 import org.qortal.gui.Gui;
@@ -55,8 +72,8 @@ import org.qortal.gui.SysTray;
 import org.qortal.network.Network;
 import org.qortal.network.Peer;
 import org.qortal.network.message.ArbitraryDataMessage;
-import org.qortal.network.message.BlockMessage;
 import org.qortal.network.message.BlockSummariesMessage;
+import org.qortal.network.message.CachedBlockMessage;
 import org.qortal.network.message.GetArbitraryDataMessage;
 import org.qortal.network.message.GetBlockMessage;
 import org.qortal.network.message.GetBlockSummariesMessage;
@@ -71,20 +88,14 @@ import org.qortal.network.message.OnlineAccountsMessage;
 import org.qortal.network.message.SignaturesMessage;
 import org.qortal.network.message.TransactionMessage;
 import org.qortal.network.message.TransactionSignaturesMessage;
-import org.qortal.repository.DataException;
-import org.qortal.repository.Repository;
-import org.qortal.repository.RepositoryFactory;
-import org.qortal.repository.RepositoryManager;
+import org.qortal.repository.*;
 import org.qortal.repository.hsqldb.HSQLDBRepositoryFactory;
 import org.qortal.settings.Settings;
 import org.qortal.transaction.ArbitraryTransaction;
 import org.qortal.transaction.Transaction;
 import org.qortal.transaction.Transaction.TransactionType;
 import org.qortal.transaction.Transaction.ValidationResult;
-import org.qortal.utils.Base58;
-import org.qortal.utils.ByteArray;
-import org.qortal.utils.NTP;
-import org.qortal.utils.Triple;
+import org.qortal.utils.*;
 
 import com.google.common.primitives.Longs;
 
@@ -92,6 +103,7 @@ public class Controller extends Thread {
 
 	static {
 		// This must go before any calls to LogManager/Logger
+		System.setProperty("log4j2.formatMsgNoLookups", "true");
 		System.setProperty("java.util.logging.manager", "org.apache.logging.log4j.jul.LogManager");
 	}
 
@@ -108,12 +120,15 @@ public class Controller extends Thread {
 	private static final long NTP_PRE_SYNC_CHECK_PERIOD = 5 * 1000L; // ms
 	private static final long NTP_POST_SYNC_CHECK_PERIOD = 5 * 60 * 1000L; // ms
 	private static final long DELETE_EXPIRED_INTERVAL = 5 * 60 * 1000L; // ms
+	private static final long RECOVERY_MODE_TIMEOUT = 10 * 60 * 1000L; // ms
 
 	// To do with online accounts list
 	private static final long ONLINE_ACCOUNTS_TASKS_INTERVAL = 10 * 1000L; // ms
 	private static final long ONLINE_ACCOUNTS_BROADCAST_INTERVAL = 1 * 60 * 1000L; // ms
-	private static final long ONLINE_TIMESTAMP_MODULUS = 5 * 60 * 1000L;
+	public static final long ONLINE_TIMESTAMP_MODULUS = 5 * 60 * 1000L;
 	private static final long LAST_SEEN_EXPIRY_PERIOD = (ONLINE_TIMESTAMP_MODULUS * 2) + (1 * 60 * 1000L);
+	/** How many (latest) blocks' worth of online accounts we cache */
+	private static final int MAX_BLOCKS_CACHED_ONLINE_ACCOUNTS = 2;
 
 	private static volatile boolean isStopping = false;
 	private static BlockMinter blockMinter = null;
@@ -128,16 +143,31 @@ public class Controller extends Thread {
 	private ExecutorService callbackExecutor = Executors.newFixedThreadPool(3);
 	private volatile boolean notifyGroupMembershipChange = false;
 
-	private volatile BlockData chainTip = null;
+	/** Latest blocks on our chain. Note: tail/last is the latest block. */
+	private final Deque<BlockData> latestBlocks = new LinkedList<>();
+
+	/** Cache of BlockMessages, indexed by block signature */
+	@SuppressWarnings("serial")
+	private final LinkedHashMap<ByteArray, CachedBlockMessage> blockMessageCache = new LinkedHashMap<>() {
+		@Override
+		protected boolean removeEldestEntry(Map.Entry<ByteArray, CachedBlockMessage> eldest) {
+			return this.size() > Settings.getInstance().getBlockCacheSize();
+		}
+	};
 
 	private long repositoryBackupTimestamp = startTime; // ms
+	private long repositoryMaintenanceTimestamp = startTime; // ms
+	private long repositoryCheckpointTimestamp = startTime; // ms
 	private long ntpCheckTimestamp = startTime; // ms
 	private long deleteExpiredTimestamp = startTime + DELETE_EXPIRED_INTERVAL; // ms
+
 	private long onlineAccountsTasksTimestamp = startTime + ONLINE_ACCOUNTS_TASKS_INTERVAL; // ms
 
 	/** Whether we can mint new blocks, as reported by BlockMinter. */
 	private volatile boolean isMintingPossible = false;
 
+	/** Synchronization object for sync variables below */
+	private final Object syncLock = new Object();
 	/** Whether we are attempting to synchronize. */
 	private volatile boolean isSynchronizing = false;
 	/** Temporary estimate of synchronization progress for SysTray use. */
@@ -145,6 +175,11 @@ public class Controller extends Thread {
 
 	/** Latest block signatures from other peers that we know are on inferior chains. */
 	List<ByteArray> inferiorChainSignatures = new ArrayList<>();
+
+	/** Recovery mode, which is used to bring back a stalled network */
+	private boolean recoveryMode = false;
+	private boolean peersAvailable = true; // peersAvailable must default to true
+	private long timePeersLastAvailable = 0;
 
 	/**
 	 * Map of recent requests for ARBITRARY transaction data payloads.
@@ -168,8 +203,51 @@ public class Controller extends Thread {
 	/** Lock for only allowing one blockchain-modifying codepath at a time. e.g. synchronization or newly minted block. */
 	private final ReentrantLock blockchainLock = new ReentrantLock();
 
-	/** Cache of 'online accounts' */
+	/** Cache of current 'online accounts' */
 	List<OnlineAccountData> onlineAccounts = new ArrayList<>();
+	/** Cache of latest blocks' online accounts */
+	Deque<List<OnlineAccountData>> latestBlocksOnlineAccounts = new ArrayDeque<>(MAX_BLOCKS_CACHED_ONLINE_ACCOUNTS);
+
+	// Stats
+	@XmlAccessorType(XmlAccessType.FIELD)
+	public static class StatsSnapshot {
+		public static class GetBlockMessageStats {
+			public AtomicLong requests = new AtomicLong();
+			public AtomicLong cacheHits = new AtomicLong();
+			public AtomicLong unknownBlocks = new AtomicLong();
+			public AtomicLong cacheFills = new AtomicLong();
+
+			public GetBlockMessageStats() {
+			}
+		}
+		public GetBlockMessageStats getBlockMessageStats = new GetBlockMessageStats();
+
+		public static class GetBlockSummariesStats {
+			public AtomicLong requests = new AtomicLong();
+			public AtomicLong cacheHits = new AtomicLong();
+			public AtomicLong fullyFromCache = new AtomicLong();
+
+			public GetBlockSummariesStats() {
+			}
+		}
+		public GetBlockSummariesStats getBlockSummariesStats = new GetBlockSummariesStats();
+
+		public static class GetBlockSignaturesV2Stats {
+			public AtomicLong requests = new AtomicLong();
+			public AtomicLong cacheHits = new AtomicLong();
+			public AtomicLong fullyFromCache = new AtomicLong();
+
+			public GetBlockSignaturesV2Stats() {
+			}
+		}
+		public GetBlockSignaturesV2Stats getBlockSignaturesV2Stats = new GetBlockSignaturesV2Stats();
+
+		public AtomicLong latestBlocksCacheRefills = new AtomicLong();
+
+		public StatsSnapshot() {
+		}
+	}
+	private final StatsSnapshot stats = new StatsSnapshot();
 
 	// Constructors
 
@@ -181,17 +259,29 @@ public class Controller extends Thread {
 			throw new RuntimeException("Can't read build.properties resource", e);
 		}
 
+		// Determine build timestamp
 		String buildTimestampProperty = properties.getProperty("build.timestamp");
-		if (buildTimestampProperty == null)
+		if (buildTimestampProperty == null) {
 			throw new RuntimeException("Can't read build.timestamp from build.properties resource");
-
-		this.buildTimestamp = LocalDateTime.parse(buildTimestampProperty, DateTimeFormatter.ofPattern("yyyyMMddHHmmss")).toEpochSecond(ZoneOffset.UTC);
+		}
+		if (buildTimestampProperty.startsWith("$")) {
+			// Maven vars haven't been replaced - this was most likely built using an IDE, not via mvn package
+			this.buildTimestamp = System.currentTimeMillis();
+			buildTimestampProperty = "unknown";
+		} else {
+			this.buildTimestamp = LocalDateTime.parse(buildTimestampProperty, DateTimeFormatter.ofPattern("yyyyMMddHHmmss")).toEpochSecond(ZoneOffset.UTC);
+		}
 		LOGGER.info(String.format("Build timestamp: %s", buildTimestampProperty));
 
+		// Determine build version
 		String buildVersionProperty = properties.getProperty("build.version");
-		if (buildVersionProperty == null)
+		if (buildVersionProperty == null) {
 			throw new RuntimeException("Can't read build.version from build.properties resource");
-
+		}
+		if (buildVersionProperty.contains("${git.commit.id.abbrev}")) {
+			// Maven vars haven't been replaced - this was most likely built using an IDE, not via mvn package
+			buildVersionProperty = buildVersionProperty.replace("${git.commit.id.abbrev}", "debug");
+		}
 		this.buildVersion = VERSION_PREFIX + buildVersionProperty;
 		LOGGER.info(String.format("Build version: %s", this.buildVersion));
 
@@ -224,23 +314,43 @@ public class Controller extends Thread {
 		return this.buildVersion;
 	}
 
+	public String getVersionStringWithoutPrefix() {
+		return this.buildVersion.replaceFirst(VERSION_PREFIX, "");
+	}
+
 	/** Returns current blockchain height, or 0 if it's not available. */
 	public int getChainHeight() {
-		BlockData blockData = this.chainTip;
-		if (blockData == null)
-			return 0;
+		synchronized (this.latestBlocks) {
+			BlockData blockData = this.latestBlocks.peekLast();
+			if (blockData == null)
+				return 0;
 
-		return blockData.getHeight();
+			return blockData.getHeight();
+		}
 	}
 
 	/** Returns highest block, or null if it's not available. */
 	public BlockData getChainTip() {
-		return this.chainTip;
+		synchronized (this.latestBlocks) {
+			return this.latestBlocks.peekLast();
+		}
 	}
 
-	/** Cache new blockchain tip. */
-	public void setChainTip(BlockData blockData) {
-		this.chainTip = blockData;
+	public void refillLatestBlocksCache() throws DataException {
+		// Set initial chain height/tip
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			BlockData blockData = repository.getBlockRepository().getLastBlock();
+			int blockCacheSize = Settings.getInstance().getBlockCacheSize();
+
+			synchronized (this.latestBlocks) {
+				this.latestBlocks.clear();
+
+				for (int i = 0; i < blockCacheSize && blockData != null; ++i) {
+					this.latestBlocks.addFirst(blockData);
+					blockData = repository.getBlockRepository().fromHeight(blockData.getHeight() - 1);
+				}
+			}
+		}
 	}
 
 	public ReentrantLock getBlockchainLock() {
@@ -251,7 +361,7 @@ public class Controller extends Thread {
 		return this.savedArgs;
 	}
 
-	/* package */ static boolean isStopping() {
+	public static boolean isStopping() {
 		return isStopping;
 	}
 
@@ -265,7 +375,13 @@ public class Controller extends Thread {
 	}
 
 	public Integer getSyncPercent() {
-		return this.isSynchronizing ? this.syncPercent : null;
+		synchronized (this.syncLock) {
+			return this.isSynchronizing ? this.syncPercent : null;
+		}
+	}
+
+	public boolean getRecoveryMode() {
+		return this.recoveryMode;
 	}
 
 	// Entry point
@@ -303,6 +419,12 @@ public class Controller extends Thread {
 		try {
 			RepositoryFactory repositoryFactory = new HSQLDBRepositoryFactory(getRepositoryUrl());
 			RepositoryManager.setRepositoryFactory(repositoryFactory);
+			RepositoryManager.setRequestedCheckpoint(Boolean.TRUE);
+
+			try (final Repository repository = RepositoryManager.getRepository()) {
+				RepositoryManager.archive(repository);
+				RepositoryManager.prune(repository);
+			}
 		} catch (DataException e) {
 			// If exception has no cause then repository is in use by some other process.
 			if (e.getCause() == null) {
@@ -316,22 +438,28 @@ public class Controller extends Thread {
 			return; // Not System.exit() so that GUI can display error
 		}
 
+		// Rebuild Names table and check database integrity
+		NamesDatabaseIntegrityCheck namesDatabaseIntegrityCheck = new NamesDatabaseIntegrityCheck();
+		namesDatabaseIntegrityCheck.rebuildAllNames();
+		namesDatabaseIntegrityCheck.runIntegrityCheck();
+
 		LOGGER.info("Validating blockchain");
 		try {
 			BlockChain.validate();
 
-			// Set initial chain height/tip
-			try (final Repository repository = RepositoryManager.getRepository()) {
-				BlockData blockData = repository.getBlockRepository().getLastBlock();
-
-				Controller.getInstance().setChainTip(blockData);
-				LOGGER.info(String.format("Our chain height at start-up: %d", blockData.getHeight()));
-			}
+			Controller.getInstance().refillLatestBlocksCache();
+			LOGGER.info(String.format("Our chain height at start-up: %d", Controller.getInstance().getChainHeight()));
 		} catch (DataException e) {
 			LOGGER.error("Couldn't validate blockchain", e);
 			Gui.getInstance().fatalError("Blockchain validation issue", e);
 			return; // Not System.exit() so that GUI can display error
 		}
+
+		// Import current trade bot states and minting accounts if they exist
+		Controller.importRepositoryData();
+
+		// Add the initial peers to the repository if we don't have any
+		Controller.installInitialPeers();
 
 		LOGGER.info("Starting controller");
 		Controller.getInstance().start();
@@ -359,6 +487,9 @@ public class Controller extends Thread {
 		LOGGER.info("Starting block minter");
 		blockMinter = new BlockMinter();
 		blockMinter.start();
+
+		LOGGER.info("Starting trade-bot");
+		TradeBot.getInstance();
 
 		// Arbitrary transaction data manager
 		// LOGGER.info("Starting arbitrary-transaction data manager");
@@ -398,6 +529,11 @@ public class Controller extends Thread {
 		Thread.currentThread().setName("Controller");
 
 		final long repositoryBackupInterval = Settings.getInstance().getRepositoryBackupInterval();
+		final long repositoryCheckpointInterval = Settings.getInstance().getRepositoryCheckpointInterval();
+		long repositoryMaintenanceInterval = getRandomRepositoryMaintenanceInterval();
+
+		// Start executor service for trimming or pruning
+		PruneManager.getInstance().start();
 
 		try {
 			while (!isStopping) {
@@ -439,6 +575,13 @@ public class Controller extends Thread {
 				final long requestMinimumTimestamp = now - ARBITRARY_REQUEST_TIMEOUT;
 				arbitraryDataRequests.entrySet().removeIf(entry -> entry.getValue().getC() < requestMinimumTimestamp);
 
+				// Time to 'checkpoint' uncommitted repository writes?
+				if (now >= repositoryCheckpointTimestamp + repositoryCheckpointInterval) {
+					repositoryCheckpointTimestamp = now + repositoryCheckpointInterval;
+
+					RepositoryManager.setRequestedCheckpoint(Boolean.TRUE);
+				}
+
 				// Give repository a chance to backup (if enabled)
 				if (repositoryBackupInterval > 0 && now >= repositoryBackupTimestamp + repositoryBackupInterval) {
 					repositoryBackupTimestamp = now + repositoryBackupInterval;
@@ -448,7 +591,39 @@ public class Controller extends Thread {
 								Translator.INSTANCE.translate("SysTray", "CREATING_BACKUP_OF_DB_FILES"),
 								MessageType.INFO);
 
-					RepositoryManager.backup(true);
+					try {
+						// Timeout if the database isn't ready for backing up after 60 seconds
+						long timeout = 60 * 1000L;
+						RepositoryManager.backup(true, "backup", timeout);
+
+					} catch (TimeoutException e) {
+						LOGGER.info("Attempt to backup repository failed due to timeout: {}", e.getMessage());
+					}
+				}
+
+				// Give repository a chance to perform maintenance (if enabled)
+				if (repositoryMaintenanceInterval > 0 && now >= repositoryMaintenanceTimestamp + repositoryMaintenanceInterval) {
+					repositoryMaintenanceTimestamp = now + repositoryMaintenanceInterval;
+
+					if (Settings.getInstance().getShowMaintenanceNotification())
+						SysTray.getInstance().showMessage(Translator.INSTANCE.translate("SysTray", "DB_MAINTENANCE"),
+								Translator.INSTANCE.translate("SysTray", "PERFORMING_DB_MAINTENANCE"),
+								MessageType.INFO);
+
+					LOGGER.info("Starting scheduled repository maintenance. This can take a while...");
+					try (final Repository repository = RepositoryManager.getRepository()) {
+
+						// Timeout if the database isn't ready for maintenance after 60 seconds
+						long timeout = 60 * 1000L;
+						repository.performPeriodicMaintenance(timeout);
+
+						LOGGER.info("Scheduled repository maintenance completed");
+					} catch (DataException | TimeoutException e) {
+						LOGGER.error("Scheduled repository maintenance failed", e);
+					}
+
+					// Get a new random interval
+					repositoryMaintenanceInterval = getRandomRepositoryMaintenanceInterval();
 				}
 
 				// Prune stuck/slow/old peers
@@ -471,7 +646,72 @@ public class Controller extends Thread {
 				}
 			}
 		} catch (InterruptedException e) {
+			// Clear interrupted flag so we can shutdown trim threads
+			Thread.interrupted();
 			// Fall-through to exit
+		} finally {
+			PruneManager.getInstance().stop();
+		}
+	}
+
+	/**
+	 * Import current trade bot states and minting accounts.
+	 * This is needed because the user may have bootstrapped, or there could be a database inconsistency
+	 * if the core crashed when computing the nonce during the start of the trade process.
+	 */
+	private static void importRepositoryData() {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			String exportPath = Settings.getInstance().getExportPath();
+			try {
+				Path importPath = Paths.get(exportPath, "TradeBotStates.json");
+				repository.importDataFromFile(importPath.toString());
+			} catch (FileNotFoundException e) {
+				// Do nothing, as the files will only exist in certain cases
+			}
+
+			try {
+				Path importPath = Paths.get(exportPath, "MintingAccounts.json");
+				repository.importDataFromFile(importPath.toString());
+			} catch (FileNotFoundException e) {
+				// Do nothing, as the files will only exist in certain cases
+			}
+			repository.saveChanges();
+		}
+		catch (DataException | IOException e) {
+			LOGGER.info("Unable to import data into repository: {}", e.getMessage());
+		}
+	}
+
+	private static void installInitialPeers() {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			if (repository.getNetworkRepository().getAllPeers().isEmpty()) {
+				Network.installInitialPeers(repository);
+			}
+
+		} catch (DataException e) {
+			// Fail silently as this is an optional step
+		}
+	}
+
+	private long getRandomRepositoryMaintenanceInterval() {
+		final long minInterval = Settings.getInstance().getRepositoryMaintenanceMinInterval();
+		final long maxInterval = Settings.getInstance().getRepositoryMaintenanceMaxInterval();
+		if (maxInterval == 0) {
+			return 0;
+		}
+		return (new Random().nextLong() % (maxInterval - minInterval)) + minInterval;
+	}
+
+	/**
+	 * Export current trade bot states and minting accounts.
+	 */
+	public void exportRepositoryData() {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			repository.exportNodeLocalData();
+
+		} catch (DataException e) {
+			// Fail silently as this is an optional step
 		}
 	}
 
@@ -503,7 +743,16 @@ public class Controller extends Thread {
 		return peerChainTipData == null || peerChainTipData.getLastBlockSignature() == null || inferiorChainTips.contains(new ByteArray(peerChainTipData.getLastBlockSignature()));
 	};
 
+	public static final Predicate<Peer> hasOldVersion = peer -> {
+		final String minPeerVersion = Settings.getInstance().getMinPeerVersion();
+		return peer.isAtLeastVersion(minPeerVersion) == false;
+	};
+
 	private void potentiallySynchronize() throws InterruptedException {
+		// Already synchronizing via another thread?
+		if (this.isSynchronizing)
+			return;
+
 		List<Peer> peers = Network.getInstance().getHandshakedPeers();
 
 		// Disregard peers that have "misbehaved" recently
@@ -515,6 +764,17 @@ public class Controller extends Thread {
 		// Disregard peers that don't have a recent block
 		peers.removeIf(hasNoRecentBlock);
 
+		// Disregard peers that are on an old version
+		peers.removeIf(hasOldVersion);
+
+		checkRecoveryModeForPeers(peers);
+		if (recoveryMode) {
+			peers = Network.getInstance().getHandshakedPeers();
+			peers.removeIf(hasOnlyGenesisBlock);
+			peers.removeIf(hasMisbehaved);
+			peers.removeIf(hasOldVersion);
+		}
+
 		// Check we have enough peers to potentially synchronize
 		if (peers.size() < Settings.getInstance().getMinBlockchainPeers())
 			return;
@@ -525,8 +785,30 @@ public class Controller extends Thread {
 		// Disregard peers that are on the same block as last sync attempt and we didn't like their chain
 		peers.removeIf(hasInferiorChainTip);
 
+		final int peersBeforeComparison = peers.size();
+
+		// Request recent block summaries from the remaining peers, and locate our common block with each
+		Synchronizer.getInstance().findCommonBlocksWithPeers(peers);
+
+		// Compare the peers against each other, and against our chain, which will return an updated list excluding those without common blocks
+		peers = Synchronizer.getInstance().comparePeers(peers);
+
+		// We may have added more inferior chain tips when comparing peers, so remove any peers that are currently on those chains
+		peers.removeIf(hasInferiorChainTip);
+
+		final int peersRemoved = peersBeforeComparison - peers.size();
+		if (peersRemoved > 0 && peers.size() > 0)
+			LOGGER.debug(String.format("Ignoring %d peers on inferior chains. Peers remaining: %d", peersRemoved, peers.size()));
+
 		if (peers.isEmpty())
 			return;
+
+		if (peers.size() > 1) {
+			StringBuilder finalPeersString = new StringBuilder();
+			for (Peer peer : peers)
+				finalPeersString = finalPeersString.length() > 0 ? finalPeersString.append(", ").append(peer) : finalPeersString.append(peer);
+			LOGGER.debug(String.format("Choosing random peer from: [%s]", finalPeersString.toString()));
+		}
 
 		// Pick random peer to sync with
 		int index = new SecureRandom().nextInt(peers.size());
@@ -536,11 +818,22 @@ public class Controller extends Thread {
 	}
 
 	public SynchronizationResult actuallySynchronize(Peer peer, boolean force) throws InterruptedException {
-		syncPercent = (this.chainTip.getHeight() * 100) / peer.getChainTipData().getLastHeight();
-		isSynchronizing = true;
-		updateSysTray();
+		boolean hasStatusChanged = false;
+		BlockData priorChainTip = this.getChainTip();
 
-		BlockData priorChainTip = this.chainTip;
+		synchronized (this.syncLock) {
+			this.syncPercent = (priorChainTip.getHeight() * 100) / peer.getChainTipData().getLastHeight();
+
+			// Only update SysTray if we're potentially changing height
+			if (this.syncPercent < 100) {
+				this.isSynchronizing = true;
+				hasStatusChanged = true;
+			}
+		}
+		peer.setSyncInProgress(true);
+
+		if (hasStatusChanged)
+			updateSysTray();
 
 		try {
 			SynchronizationResult syncResult = Synchronizer.getInstance().synchronize(peer, force);
@@ -584,7 +877,6 @@ public class Controller extends Thread {
 					break;
 
 				case OK:
-					requestSysTrayUpdate = true;
 					// fall-through...
 				case NOTHING_TO_DO: {
 					// Update our list of inferior chain tips
@@ -611,20 +903,66 @@ public class Controller extends Thread {
 				// Reset our cache of inferior chains
 				inferiorChainSignatures.clear();
 
-				// Update chain-tip, notify peers, websockets, etc.
-				this.onNewBlock(newChainTip);
+				Network network = Network.getInstance();
+				network.broadcast(broadcastPeer -> network.buildHeightMessage(broadcastPeer, newChainTip));
 			}
 
 			return syncResult;
 		} finally {
 			isSynchronizing = false;
-			requestSysTrayUpdate = true;
+			peer.setSyncInProgress(false);
+		}
+	}
+
+	private boolean checkRecoveryModeForPeers(List<Peer> qualifiedPeers) {
+		List<Peer> handshakedPeers = Network.getInstance().getHandshakedPeers();
+
+		if (handshakedPeers.size() > 0) {
+			// There is at least one handshaked peer
+			if (qualifiedPeers.isEmpty()) {
+				// There are no 'qualified' peers - i.e. peers that have a recent block we can sync to
+				boolean werePeersAvailable = peersAvailable;
+				peersAvailable = false;
+
+				// If peers only just became unavailable, update our record of the time they were last available
+				if (werePeersAvailable)
+					timePeersLastAvailable = NTP.getTime();
+
+				// If enough time has passed, enter recovery mode, which lifts some restrictions on who we can sync with and when we can mint
+				if (NTP.getTime() - timePeersLastAvailable > RECOVERY_MODE_TIMEOUT) {
+					if (recoveryMode == false) {
+						LOGGER.info(String.format("Peers have been unavailable for %d minutes. Entering recovery mode...", RECOVERY_MODE_TIMEOUT/60/1000));
+						recoveryMode = true;
+					}
+				}
+			} else {
+				// We now have at least one peer with a recent block, so we can exit recovery mode and sync normally
+				peersAvailable = true;
+				if (recoveryMode) {
+					LOGGER.info("Peers have become available again. Exiting recovery mode...");
+					recoveryMode = false;
+				}
+			}
+		}
+		return recoveryMode;
+	}
+
+	public void addInferiorChainSignature(byte[] inferiorSignature) {
+		// Update our list of inferior chain tips
+		ByteArray inferiorChainSignature = new ByteArray(inferiorSignature);
+		if (!inferiorChainSignatures.contains(inferiorChainSignature))
+			inferiorChainSignatures.add(inferiorChainSignature);
+	}
+
+	public static class StatusChangeEvent implements Event {
+		public StatusChangeEvent() {
 		}
 	}
 
 	private void updateSysTray() {
 		if (NTP.getTime() == null) {
 			SysTray.getInstance().setToolTipText(Translator.INSTANCE.translate("SysTray", "SYNCHRONIZING_CLOCK"));
+			SysTray.getInstance().setTrayIcon(1);
 			return;
 		}
 
@@ -636,20 +974,31 @@ public class Controller extends Thread {
 		String heightText = Translator.INSTANCE.translate("SysTray", "BLOCK_HEIGHT");
 
 		String actionText;
-		if (isMintingPossible)
-			actionText = Translator.INSTANCE.translate("SysTray", "MINTING_ENABLED");
-		else if (isSynchronizing)
-			actionText = String.format("%s - %d%%", Translator.INSTANCE.translate("SysTray", "SYNCHRONIZING_BLOCKCHAIN"), syncPercent);
-		else if (numberOfPeers < Settings.getInstance().getMinBlockchainPeers())
-			actionText = Translator.INSTANCE.translate("SysTray", "CONNECTING");
-		else
-			actionText = Translator.INSTANCE.translate("SysTray", "MINTING_DISABLED");
 
-		String tooltip = String.format("%s - %d %s - %s %d", actionText, numberOfPeers, connectionsText, heightText, height);
+		synchronized (this.syncLock) {
+			if (this.isMintingPossible) {
+				actionText = Translator.INSTANCE.translate("SysTray", "MINTING_ENABLED");
+				SysTray.getInstance().setTrayIcon(2);
+			}
+			else if (this.isSynchronizing) {
+				actionText = String.format("%s - %d%%", Translator.INSTANCE.translate("SysTray", "SYNCHRONIZING_BLOCKCHAIN"), this.syncPercent);
+				SysTray.getInstance().setTrayIcon(3);
+			}
+			else if (numberOfPeers < Settings.getInstance().getMinBlockchainPeers()) {
+				actionText = Translator.INSTANCE.translate("SysTray", "CONNECTING");
+				SysTray.getInstance().setTrayIcon(3);
+			}
+			else {
+				actionText = Translator.INSTANCE.translate("SysTray", "MINTING_DISABLED");
+				SysTray.getInstance().setTrayIcon(4);
+			}
+		}
+
+		String tooltip = String.format("%s - %d %s - %s %d", actionText, numberOfPeers, connectionsText, heightText, height) + "\n" + String.format("%s: %s", Translator.INSTANCE.translate("SysTray", "BUILD_VERSION"), this.buildVersion);
 		SysTray.getInstance().setToolTipText(tooltip);
 
 		this.callbackExecutor.execute(() -> {
-			StatusNotifier.getInstance().onStatusChange(NTP.getTime());
+			EventBus.INSTANCE.notify(new StatusChangeEvent());
 		});
 	}
 
@@ -665,15 +1014,26 @@ public class Controller extends Thread {
 
 			List<TransactionData> transactions = repository.getTransactionRepository().getUnconfirmedTransactions();
 
-			for (TransactionData transactionData : transactions)
-				if (now >= Transaction.getDeadline(transactionData)) {
-					LOGGER.info(String.format("Deleting expired, unconfirmed transaction %s", Base58.encode(transactionData.getSignature())));
+			int deletedCount = 0;
+			for (TransactionData transactionData : transactions) {
+				Transaction transaction = Transaction.fromData(repository, transactionData);
+
+				if (now >= transaction.getDeadline()) {
+					LOGGER.debug(() -> String.format("Deleting expired, unconfirmed transaction %s", Base58.encode(transactionData.getSignature())));
 					repository.getTransactionRepository().delete(transactionData);
+					deletedCount++;
 				}
+			}
+			if (deletedCount > 0) {
+				LOGGER.info(String.format("Deleted %d expired, unconfirmed transaction%s", deletedCount, (deletedCount == 1 ? "" : "s")));
+			}
 
 			repository.saveChanges();
 		} catch (DataException e) {
-			LOGGER.error("Repository issue while deleting expired unconfirmed transactions", e);
+			if (RepositoryManager.isDeadlockRelated(e))
+				LOGGER.info("Couldn't delete some expired, unconfirmed transactions this round");
+			else
+				LOGGER.error("Repository issue while deleting expired unconfirmed transactions", e);
 		}
 	}
 
@@ -705,6 +1065,10 @@ public class Controller extends Thread {
 						// We were interrupted while waiting for thread to join
 					}
 				}
+
+				// Export local data
+				LOGGER.info("Backing up local data");
+				this.exportRepositoryData();
 
 				LOGGER.info("Shutting down networking");
 				Network.getInstance().shutdown();
@@ -776,29 +1140,154 @@ public class Controller extends Thread {
 		requestSysTrayUpdate = true;
 	}
 
-	public void onNewBlock(BlockData latestBlockData) {
-		this.setChainTip(latestBlockData);
-		requestSysTrayUpdate = true;
+	public static class NewBlockEvent implements Event {
+		private final BlockData blockData;
 
-		// Broadcast our new height info and notify websocket listeners
-		this.callbackExecutor.execute(() -> {
-			Network network = Network.getInstance();
-			network.broadcast(peer -> network.buildHeightMessage(peer, latestBlockData));
+		public NewBlockEvent(BlockData blockData) {
+			this.blockData = blockData;
+		}
 
-			BlockNotifier.getInstance().onNewBlock(latestBlockData);
-
-			if (this.notifyGroupMembershipChange) {
-				this.notifyGroupMembershipChange = false;
-				ChatNotifier.getInstance().onGroupMembershipChange();
-			}
-		});
+		public BlockData getBlockData() {
+			return this.blockData;
+		}
 	}
 
-	/** Callback for when we've received a new transaction via API or peer. */
-	public void onNewTransaction(TransactionData transactionData, Peer peer) {
+	/**
+	 * Callback for when we've received a new block.
+	 * <p>
+	 * See <b>WARNING</b> for {@link EventBus#notify(Event)}
+	 * to prevent deadlocks.
+	 */
+	public void onNewBlock(BlockData latestBlockData) {
+		// Protective copy
+		BlockData blockDataCopy = new BlockData(latestBlockData);
+		int blockCacheSize = Settings.getInstance().getBlockCacheSize();
+
+		synchronized (this.latestBlocks) {
+			BlockData cachedChainTip = this.latestBlocks.peekLast();
+
+			if (cachedChainTip != null && Arrays.equals(cachedChainTip.getSignature(), blockDataCopy.getReference())) {
+				// Chain tip is parent for new latest block, so we can safely add new latest block
+				this.latestBlocks.addLast(latestBlockData);
+
+				// Trim if necessary
+				if (this.latestBlocks.size() >= blockCacheSize)
+					this.latestBlocks.pollFirst();
+			} else {
+				if (cachedChainTip != null)
+					// Chain tip didn't match - potentially abnormal behaviour?
+					LOGGER.debug(() -> String.format("Cached chain tip %.8s not parent for new latest block %.8s (reference %.8s)",
+							Base58.encode(cachedChainTip.getSignature()),
+							Base58.encode(blockDataCopy.getSignature()),
+							Base58.encode(blockDataCopy.getReference())));
+
+				// Defensively rebuild cache
+				try {
+					this.stats.latestBlocksCacheRefills.incrementAndGet();
+
+					this.refillLatestBlocksCache();
+				} catch (DataException e) {
+					LOGGER.warn(() -> "Couldn't refill latest blocks cache?", e);
+				}
+			}
+		}
+
+		this.onNewOrOrphanedBlock(blockDataCopy, NewBlockEvent::new);
+	}
+
+	public static class OrphanedBlockEvent implements Event {
+		private final BlockData blockData;
+
+		public OrphanedBlockEvent(BlockData blockData) {
+			this.blockData = blockData;
+		}
+
+		public BlockData getBlockData() {
+			return this.blockData;
+		}
+	}
+
+	/**
+	 * Callback for when we've orphaned a block.
+	 * <p>
+	 * See <b>WARNING</b> for {@link EventBus#notify(Event)}
+	 * to prevent deadlocks.
+	 */
+	public void onOrphanedBlock(BlockData latestBlockData) {
+		// Protective copy
+		BlockData blockDataCopy = new BlockData(latestBlockData);
+
+		synchronized (this.latestBlocks) {
+			BlockData cachedChainTip = this.latestBlocks.pollLast();
+			boolean refillNeeded = false;
+
+			if (cachedChainTip != null && Arrays.equals(cachedChainTip.getReference(), blockDataCopy.getSignature())) {
+				// Chain tip was parent for new latest block that has been orphaned, so we're good
+
+				// However, if we've emptied the cache then we will need to refill it
+				refillNeeded = this.latestBlocks.isEmpty();
+			} else {
+				if (cachedChainTip != null)
+					// Chain tip didn't match - potentially abnormal behaviour?
+					LOGGER.debug(() -> String.format("Cached chain tip %.8s (reference %.8s) was not parent for new latest block %.8s",
+							Base58.encode(cachedChainTip.getSignature()),
+							Base58.encode(cachedChainTip.getReference()),
+							Base58.encode(blockDataCopy.getSignature())));
+
+				// Defensively rebuild cache
+				refillNeeded = true;
+			}
+
+			if (refillNeeded)
+				try {
+					this.stats.latestBlocksCacheRefills.incrementAndGet();
+
+					this.refillLatestBlocksCache();
+				} catch (DataException e) {
+					LOGGER.warn(() -> "Couldn't refill latest blocks cache?", e);
+				}
+		}
+
+		this.onNewOrOrphanedBlock(blockDataCopy, OrphanedBlockEvent::new);
+	}
+
+	private void onNewOrOrphanedBlock(BlockData blockDataCopy, Function<BlockData, Event> eventConstructor) {
+		requestSysTrayUpdate = true;
+
+		// Notify listeners, trade-bot, etc.
+		EventBus.INSTANCE.notify(eventConstructor.apply(blockDataCopy));
+
+		if (this.notifyGroupMembershipChange) {
+			this.notifyGroupMembershipChange = false;
+			ChatNotifier.getInstance().onGroupMembershipChange();
+		}
+	}
+
+	public static class NewTransactionEvent implements Event {
+		private final TransactionData transactionData;
+
+		public NewTransactionEvent(TransactionData transactionData) {
+			this.transactionData = transactionData;
+		}
+
+		public TransactionData getTransactionData() {
+			return this.transactionData;
+		}
+	}
+
+	/**
+	 * Callback for when we've received a new transaction via API or peer.
+	 * <p>
+	 * @implSpec performs actions in a new thread
+	 */
+	public void onNewTransaction(TransactionData transactionData) {
 		this.callbackExecutor.execute(() -> {
-			// Notify all peers (except maybe peer that sent it to us if applicable)
-			Network.getInstance().broadcast(broadcastPeer -> broadcastPeer == peer ? null : new TransactionSignaturesMessage(Arrays.asList(transactionData.getSignature())));
+			// Notify all peers
+			Message newTransactionSignatureMessage = new TransactionSignaturesMessage(Arrays.asList(transactionData.getSignature()));
+			Network.getInstance().broadcast(broadcastPeer -> newTransactionSignatureMessage);
+
+			// Notify listeners
+			EventBus.INSTANCE.notify(new NewTransactionEvent(transactionData));
 
 			// If this is a CHAT transaction, there may be extra listeners to notify
 			if (transactionData.getType() == TransactionType.CHAT)
@@ -886,21 +1375,90 @@ public class Controller extends Thread {
 	private void onNetworkGetBlockMessage(Peer peer, Message message) {
 		GetBlockMessage getBlockMessage = (GetBlockMessage) message;
 		byte[] signature = getBlockMessage.getSignature();
+		this.stats.getBlockMessageStats.requests.incrementAndGet();
+
+		ByteArray signatureAsByteArray = new ByteArray(signature);
+
+		CachedBlockMessage cachedBlockMessage = this.blockMessageCache.get(signatureAsByteArray);
+		int blockCacheSize = Settings.getInstance().getBlockCacheSize();
+
+		// Check cached latest block message
+		if (cachedBlockMessage != null) {
+			this.stats.getBlockMessageStats.cacheHits.incrementAndGet();
+
+			// We need to duplicate it to prevent multiple threads setting ID on the same message
+			CachedBlockMessage clonedBlockMessage = cachedBlockMessage.cloneWithNewId(message.getId());
+
+			if (!peer.sendMessage(clonedBlockMessage))
+				peer.disconnect("failed to send block");
+
+			return;
+		}
 
 		try (final Repository repository = RepositoryManager.getRepository()) {
 			BlockData blockData = repository.getBlockRepository().fromSignature(signature);
+
+			if (blockData != null) {
+				if (PruneManager.getInstance().isBlockPruned(blockData.getHeight())) {
+					// If this is a pruned block, we likely only have partial data, so best not to sent it
+					blockData = null;
+				}
+			}
+
+			// If we have no block data, we should check the archive in case it's there
 			if (blockData == null) {
-				LOGGER.debug(() -> String.format("Ignoring GET_BLOCK request from peer %s for unknown block %s", peer, Base58.encode(signature)));
-				// Send no response at all???
+				if (Settings.getInstance().isArchiveEnabled()) {
+					byte[] bytes = BlockArchiveReader.getInstance().fetchSerializedBlockBytesForSignature(signature, true, repository);
+					if (bytes != null) {
+						CachedBlockMessage blockMessage = new CachedBlockMessage(bytes);
+						blockMessage.setId(message.getId());
+
+						// This call also causes the other needed data to be pulled in from repository
+						if (!peer.sendMessage(blockMessage)) {
+							peer.disconnect("failed to send block");
+							// Don't fall-through to caching because failure to send might be from failure to build message
+							return;
+						}
+
+						// Sent successfully from archive, so nothing more to do
+						return;
+					}
+				}
+			}
+
+			if (blockData == null) {
+				// We don't have this block
+				this.stats.getBlockMessageStats.unknownBlocks.getAndIncrement();
+
+				// Send valid, yet unexpected message type in response, so peer's synchronizer doesn't have to wait for timeout
+				LOGGER.debug(() -> String.format("Sending 'block unknown' response to peer %s for GET_BLOCK request for unknown block %s", peer, Base58.encode(signature)));
+
+				// We'll send empty block summaries message as it's very short
+				Message blockUnknownMessage = new BlockSummariesMessage(Collections.emptyList());
+				blockUnknownMessage.setId(message.getId());
+				if (!peer.sendMessage(blockUnknownMessage))
+					peer.disconnect("failed to send block-unknown response");
 				return;
 			}
 
 			Block block = new Block(repository, blockData);
 
-			Message blockMessage = new BlockMessage(block);
+			CachedBlockMessage blockMessage = new CachedBlockMessage(block);
 			blockMessage.setId(message.getId());
-			if (!peer.sendMessage(blockMessage))
+
+			// This call also causes the other needed data to be pulled in from repository
+			if (!peer.sendMessage(blockMessage)) {
 				peer.disconnect("failed to send block");
+				// Don't fall-through to caching because failure to send might be from failure to build message
+				return;
+			}
+
+			// If request is for a recent block, cache it
+			if (getChainHeight() - blockData.getHeight() <= blockCacheSize) {
+				this.stats.getBlockMessageStats.cacheFills.incrementAndGet();
+
+				this.blockMessageCache.put(new ByteArray(blockData.getSignature()), blockMessage);
+			}
 		} catch (DataException e) {
 			LOGGER.error(String.format("Repository issue while send block %s to peer %s", Base58.encode(signature), peer), e);
 		}
@@ -909,6 +1467,18 @@ public class Controller extends Thread {
 	private void onNetworkTransactionMessage(Peer peer, Message message) {
 		TransactionMessage transactionMessage = (TransactionMessage) message;
 		TransactionData transactionData = transactionMessage.getTransactionData();
+
+		/*
+		 *  If we can't obtain blockchain lock immediately,
+		 *  e.g. Synchronizer is active, or another transaction is taking a while to validate,
+		 *  then we're using up a network thread for ages and clogging things up
+		 *  so bail out early
+		 */
+		ReentrantLock blockchainLock = Controller.getInstance().getBlockchainLock();
+		if (!blockchainLock.tryLock()) {
+			LOGGER.trace(() -> String.format("Too busy to import %s transaction %s from peer %s", transactionData.getType().name(), Base58.encode(transactionData.getSignature()), peer));
+			return;
+		}
 
 		try (final Repository repository = RepositoryManager.getRepository()) {
 			Transaction transaction = Transaction.fromData(repository, transactionData);
@@ -939,67 +1509,143 @@ public class Controller extends Thread {
 			LOGGER.debug(() -> String.format("Imported %s transaction %s from peer %s", transactionData.getType().name(), Base58.encode(transactionData.getSignature()), peer));
 		} catch (DataException e) {
 			LOGGER.error(String.format("Repository issue while processing transaction %s from peer %s", Base58.encode(transactionData.getSignature()), peer), e);
+		} finally {
+			blockchainLock.unlock();
 		}
-
-		// Notify controller so it can notify other peers, etc.
-		Controller.getInstance().onNewTransaction(transactionData, peer);
 	}
 
 	private void onNetworkGetBlockSummariesMessage(Peer peer, Message message) {
 		GetBlockSummariesMessage getBlockSummariesMessage = (GetBlockSummariesMessage) message;
-		byte[] parentSignature = getBlockSummariesMessage.getParentSignature();
+		final byte[] parentSignature = getBlockSummariesMessage.getParentSignature();
+		this.stats.getBlockSummariesStats.requests.incrementAndGet();
 
-		try (final Repository repository = RepositoryManager.getRepository()) {
-			List<BlockSummaryData> blockSummaries = new ArrayList<>();
-
-			int numberRequested = Math.min(Network.MAX_BLOCK_SUMMARIES_PER_REPLY, getBlockSummariesMessage.getNumberRequested());
-
-			do {
-				BlockData blockData = repository.getBlockRepository().fromReference(parentSignature);
-
-				if (blockData == null)
-					// No more blocks to send to peer
-					break;
-
-				BlockSummaryData blockSummary = new BlockSummaryData(blockData);
-				blockSummaries.add(blockSummary);
-				parentSignature = blockData.getSignature();
-			} while (blockSummaries.size() < numberRequested);
-
-			Message blockSummariesMessage = new BlockSummariesMessage(blockSummaries);
+		// If peer's parent signature matches our latest block signature
+		// then we can short-circuit with an empty response
+		BlockData chainTip = getChainTip();
+		if (chainTip != null && Arrays.equals(parentSignature, chainTip.getSignature())) {
+			Message blockSummariesMessage = new BlockSummariesMessage(Collections.emptyList());
 			blockSummariesMessage.setId(message.getId());
 			if (!peer.sendMessage(blockSummariesMessage))
 				peer.disconnect("failed to send block summaries");
-		} catch (DataException e) {
-			LOGGER.error(String.format("Repository issue while sending block summaries after %s to peer %s", Base58.encode(parentSignature), peer), e);
+
+			return;
 		}
+
+		List<BlockSummaryData> blockSummaries = new ArrayList<>();
+
+		// Attempt to serve from our cache of latest blocks
+		synchronized (this.latestBlocks) {
+			blockSummaries = this.latestBlocks.stream()
+					.dropWhile(cachedBlockData -> !Arrays.equals(cachedBlockData.getReference(), parentSignature))
+					.map(BlockSummaryData::new)
+					.collect(Collectors.toList());
+		}
+
+		if (blockSummaries.isEmpty()) {
+			try (final Repository repository = RepositoryManager.getRepository()) {
+				int numberRequested = Math.min(Network.MAX_BLOCK_SUMMARIES_PER_REPLY, getBlockSummariesMessage.getNumberRequested());
+
+				BlockData blockData = repository.getBlockRepository().fromReference(parentSignature);
+				if (blockData == null) {
+					// Try the archive
+					blockData = repository.getBlockArchiveRepository().fromReference(parentSignature);
+				}
+
+				if (blockData != null) {
+					if (PruneManager.getInstance().isBlockPruned(blockData.getHeight())) {
+						// If this request contains a pruned block, we likely only have partial data, so best not to sent anything
+						// We always prune from the oldest first, so it's fine to just check the first block requested
+						blockData = null;
+					}
+				}
+
+				while (blockData != null && blockSummaries.size() < numberRequested) {
+					BlockSummaryData blockSummary = new BlockSummaryData(blockData);
+					blockSummaries.add(blockSummary);
+
+					byte[] previousSignature = blockData.getSignature();
+					blockData = repository.getBlockRepository().fromReference(previousSignature);
+					if (blockData == null) {
+						// Try the archive
+						blockData = repository.getBlockArchiveRepository().fromReference(previousSignature);
+					}
+				}
+			} catch (DataException e) {
+				LOGGER.error(String.format("Repository issue while sending block summaries after %s to peer %s", Base58.encode(parentSignature), peer), e);
+			}
+		} else {
+			this.stats.getBlockSummariesStats.cacheHits.incrementAndGet();
+
+			if (blockSummaries.size() >= getBlockSummariesMessage.getNumberRequested())
+				this.stats.getBlockSummariesStats.fullyFromCache.incrementAndGet();
+		}
+
+		Message blockSummariesMessage = new BlockSummariesMessage(blockSummaries);
+		blockSummariesMessage.setId(message.getId());
+		if (!peer.sendMessage(blockSummariesMessage))
+			peer.disconnect("failed to send block summaries");
 	}
 
 	private void onNetworkGetSignaturesV2Message(Peer peer, Message message) {
 		GetSignaturesV2Message getSignaturesMessage = (GetSignaturesV2Message) message;
-		byte[] parentSignature = getSignaturesMessage.getParentSignature();
+		final byte[] parentSignature = getSignaturesMessage.getParentSignature();
+		this.stats.getBlockSignaturesV2Stats.requests.incrementAndGet();
 
-		try (final Repository repository = RepositoryManager.getRepository()) {
-			List<byte[]> signatures = new ArrayList<>();
-
-			do {
-				BlockData blockData = repository.getBlockRepository().fromReference(parentSignature);
-
-				if (blockData == null)
-					// No more signatures to send to peer
-					break;
-
-				parentSignature = blockData.getSignature();
-				signatures.add(parentSignature);
-			} while (signatures.size() < getSignaturesMessage.getNumberRequested());
-
-			Message signaturesMessage = new SignaturesMessage(signatures);
+		// If peer's parent signature matches our latest block signature
+		// then we can short-circuit with an empty response
+		BlockData chainTip = getChainTip();
+		if (chainTip != null && Arrays.equals(parentSignature, chainTip.getSignature())) {
+			Message signaturesMessage = new SignaturesMessage(Collections.emptyList());
 			signaturesMessage.setId(message.getId());
 			if (!peer.sendMessage(signaturesMessage))
 				peer.disconnect("failed to send signatures (v2)");
-		} catch (DataException e) {
-			LOGGER.error(String.format("Repository issue while sending V2 signatures after %s to peer %s", Base58.encode(parentSignature), peer), e);
+
+			return;
 		}
+
+		List<byte[]> signatures = new ArrayList<>();
+
+		// Attempt to serve from our cache of latest blocks
+		synchronized (this.latestBlocks) {
+			signatures = this.latestBlocks.stream()
+					.dropWhile(cachedBlockData -> !Arrays.equals(cachedBlockData.getReference(), parentSignature))
+					.map(BlockData::getSignature)
+					.collect(Collectors.toList());
+		}
+
+		if (signatures.isEmpty()) {
+			try (final Repository repository = RepositoryManager.getRepository()) {
+				int numberRequested = getSignaturesMessage.getNumberRequested();
+				BlockData blockData = repository.getBlockRepository().fromReference(parentSignature);
+				if (blockData == null) {
+					// Try the archive
+					blockData = repository.getBlockArchiveRepository().fromReference(parentSignature);
+				}
+
+				while (blockData != null && signatures.size() < numberRequested) {
+					signatures.add(blockData.getSignature());
+
+					byte[] previousSignature = blockData.getSignature();
+					blockData = repository.getBlockRepository().fromReference(previousSignature);
+					if (blockData == null) {
+						// Try the archive
+						blockData = repository.getBlockArchiveRepository().fromReference(previousSignature);
+					}
+				}
+			} catch (DataException e) {
+				LOGGER.error(String.format("Repository issue while sending V2 signatures after %s to peer %s", Base58.encode(parentSignature), peer), e);
+			}
+		} else {
+			this.stats.getBlockSignaturesV2Stats.cacheHits.incrementAndGet();
+
+			if (signatures.size() >= getSignaturesMessage.getNumberRequested())
+				this.stats.getBlockSignaturesV2Stats.fullyFromCache.incrementAndGet();
+		}
+
+		Message signaturesMessage = new SignaturesMessage(signatures);
+		signaturesMessage.setId(message.getId());
+		if (!peer.sendMessage(signaturesMessage))
+			peer.disconnect("failed to send signatures (v2)");
 	}
 
 	private void onNetworkHeightV2Message(Peer peer, Message message) {
@@ -1349,9 +1995,6 @@ public class Controller extends Thread {
 
 		// Refresh our online accounts signatures?
 		sendOurOnlineAccountsInfo();
-
-		// Trim blockchain by removing 'old' online accounts signatures
-		BlockChain.trimOldOnlineAccountsSignatures();
 	}
 
 	private void sendOurOnlineAccountsInfo() {
@@ -1450,6 +2093,32 @@ public class Controller extends Thread {
 
 		synchronized (this.onlineAccounts) {
 			return this.onlineAccounts.stream().filter(account -> account.getTimestamp() == onlineTimestamp).collect(Collectors.toList());
+		}
+	}
+
+	/** Returns cached, unmodifiable list of latest block's online accounts. */
+	public List<OnlineAccountData> getLatestBlocksOnlineAccounts() {
+		synchronized (this.latestBlocksOnlineAccounts) {
+			return this.latestBlocksOnlineAccounts.peekFirst();
+		}
+	}
+
+	/** Caches list of latest block's online accounts. Typically called by Block.process() */
+	public void pushLatestBlocksOnlineAccounts(List<OnlineAccountData> latestBlocksOnlineAccounts) {
+		synchronized (this.latestBlocksOnlineAccounts) {
+			if (this.latestBlocksOnlineAccounts.size() == MAX_BLOCKS_CACHED_ONLINE_ACCOUNTS)
+				this.latestBlocksOnlineAccounts.pollLast();
+
+			this.latestBlocksOnlineAccounts.addFirst(latestBlocksOnlineAccounts == null
+					? Collections.emptyList()
+					: Collections.unmodifiableList(latestBlocksOnlineAccounts));
+		}
+	}
+
+	/** Reverts list of latest block's online accounts. Typically called by Block.orphan() */
+	public void popLatestBlocksOnlineAccounts() {
+		synchronized (this.latestBlocksOnlineAccounts) {
+			this.latestBlocksOnlineAccounts.pollFirst();
 		}
 	}
 
@@ -1585,6 +2254,10 @@ public class Controller extends Thread {
 		}
 
 		return now - offset;
+	}
+
+	public StatsSnapshot getStatsSnapshot() {
+		return this.stats;
 	}
 
 }
