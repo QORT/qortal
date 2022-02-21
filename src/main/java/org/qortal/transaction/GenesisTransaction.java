@@ -101,6 +101,11 @@ public class GenesisTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		Account recipient = new Account(repository, this.genesisTransactionData.getRecipient());
 

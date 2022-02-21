@@ -8,11 +8,12 @@ import java.util.List;
 import java.util.Map;
 
 import org.eclipse.jetty.websocket.api.Session;
+import org.eclipse.jetty.websocket.api.WebSocketException;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketConnect;
+import org.eclipse.jetty.websocket.api.annotations.OnWebSocketError;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketMessage;
 import org.eclipse.jetty.websocket.api.annotations.WebSocket;
-import org.eclipse.jetty.websocket.servlet.WebSocketServlet;
 import org.eclipse.jetty.websocket.servlet.WebSocketServletFactory;
 import org.qortal.controller.ChatNotifier;
 import org.qortal.data.chat.ChatMessage;
@@ -23,7 +24,7 @@ import org.qortal.repository.RepositoryManager;
 
 @WebSocket
 @SuppressWarnings("serial")
-public class ChatMessagesWebSocket extends WebSocketServlet implements ApiWebSocket {
+public class ChatMessagesWebSocket extends ApiWebSocket {
 
 	@Override
 	public void configure(WebSocketServletFactory factory) {
@@ -31,6 +32,7 @@ public class ChatMessagesWebSocket extends WebSocketServlet implements ApiWebSoc
 	}
 
 	@OnWebSocketConnect
+	@Override
 	public void onWebSocketConnect(Session session) {
 		Map<String, List<String>> queryParams = session.getUpgradeRequest().getParameterMap();
 
@@ -85,12 +87,19 @@ public class ChatMessagesWebSocket extends WebSocketServlet implements ApiWebSoc
 	}
 
 	@OnWebSocketClose
+	@Override
 	public void onWebSocketClose(Session session, int statusCode, String reason) {
 		ChatNotifier.getInstance().deregister(session);
 	}
 
+	@OnWebSocketError
+	public void onWebSocketError(Session session, Throwable throwable) {
+		/* ignored */
+	}
+
 	@OnWebSocketMessage
 	public void onWebSocketMessage(Session session, String message) {
+		/* ignored */
 	}
 
 	private void onNotify(Session session, ChatTransactionData chatTransactionData, int txGroupId) {
@@ -106,6 +115,9 @@ public class ChatMessagesWebSocket extends WebSocketServlet implements ApiWebSoc
 	}
 
 	private void onNotify(Session session, ChatTransactionData chatTransactionData, List<String> involvingAddresses) {
+		if (chatTransactionData == null)
+			return;
+
 		// We only want direct/non-group messages where sender/recipient match our addresses
 		String recipient = chatTransactionData.getRecipient();
 		if (recipient == null)
@@ -123,10 +135,10 @@ public class ChatMessagesWebSocket extends WebSocketServlet implements ApiWebSoc
 		StringWriter stringWriter = new StringWriter();
 
 		try {
-			this.marshall(stringWriter, chatMessages);
+			marshall(stringWriter, chatMessages);
 
-			session.getRemote().sendString(stringWriter.toString());
-		} catch (IOException e) {
+			session.getRemote().sendStringByFuture(stringWriter.toString());
+		} catch (IOException | WebSocketException e) {
 			// No output this time?
 		}
 	}

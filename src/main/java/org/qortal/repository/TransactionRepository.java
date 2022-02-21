@@ -1,9 +1,11 @@
 package org.qortal.repository;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
 import org.qortal.api.resource.TransactionsResource.ConfirmationStatus;
+import org.qortal.arbitrary.misc.Service;
 import org.qortal.data.group.GroupApprovalData;
 import org.qortal.data.transaction.GroupApprovalTransactionData;
 import org.qortal.data.transaction.TransactionData;
@@ -69,8 +71,8 @@ public interface TransactionRepository {
 	 * @throws DataException
 	 */
 	public List<byte[]> getSignaturesMatchingCriteria(Integer startBlock, Integer blockLimit, Integer txGroupId,
-			List<TransactionType> txTypes, Integer service, String address,
-			ConfirmationStatus confirmationStatus, Integer limit, Integer offset, Boolean reverse) throws DataException;
+													  List<TransactionType> txTypes, Service service, String name, String address,
+													  ConfirmationStatus confirmationStatus, Integer limit, Integer offset, Boolean reverse) throws DataException;
 
 	/**
 	 * Returns signatures for transactions that match search criteria.
@@ -91,6 +93,39 @@ public interface TransactionRepository {
 			ConfirmationStatus confirmationStatus, Integer limit, Integer offset, Boolean reverse) throws DataException;
 
 	/**
+	 * Returns signatures for transactions that match search criteria.
+	 * <p>
+	 * Simpler version that only checks accepts one (optional) transaction type,
+	 * and one (optional) public key, within an block height range.
+	 * 
+	 * @param txType
+	 * @param publicKey
+	 * @param minBlockHeight
+	 * @param maxBlockHeight
+	 * @return
+	 * @throws DataException
+	 */
+	public List<byte[]> getSignaturesMatchingCriteria(TransactionType txType, byte[] publicKey,
+			Integer minBlockHeight, Integer maxBlockHeight) throws DataException;
+
+	/**
+	 * Returns signatures for transactions that match search criteria.
+	 * <p>
+	 * Alternate version that allows for custom where clauses and bind params.
+	 * Only use for very specific use cases, such as the names integrity check.
+	 * Not advised to be used otherwise, given that it could be possible for
+	 * unsanitized inputs to be passed in if not careful.
+	 *
+	 * @param txType
+	 * @param whereClauses
+	 * @param bindParams
+	 * @return
+	 * @throws DataException
+	 */
+	public List<byte[]> getSignaturesMatchingCustomCriteria(TransactionType txType, List<String> whereClauses,
+															List<Object> bindParams) throws DataException;
+
+	/**
 	 * Returns signature for latest auto-update transaction.
 	 * <p>
 	 * Transaction must be <tt>CONFIRMED</tt> and <tt>APPROVED</tt>
@@ -106,6 +141,17 @@ public interface TransactionRepository {
 	 * @throws DataException
 	 */
 	public byte[] getLatestAutoUpdateTransaction(TransactionType txType, int txGroupId, Integer service) throws DataException;
+
+	/**
+	 * Returns signatures for all name-registration related transactions relating to supplied name.
+	 * Note: this does not currently include ARBITRARY data relating to the name.
+	 *
+	 * @param name
+	 * @param confirmationStatus
+	 * @return
+	 * @throws DataException
+	 */
+	public List<TransactionData> getTransactionsInvolvingName(String name, ConfirmationStatus confirmationStatus) throws DataException;
 
 	/**
 	 * Returns list of transactions relating to specific asset ID.
@@ -222,6 +268,26 @@ public interface TransactionRepository {
 	public default List<TransactionData> getUnconfirmedTransactions() throws DataException {
 		return getUnconfirmedTransactions(null, null, null);
 	}
+
+	/**
+	 * Returns list of unconfirmed transactions with specified type and/or creator.
+	 * <p>
+	 * At least one of <tt>txType</tt> or <tt>creatorPublicKey</tt> must be non-null.
+	 * 
+	 * @param txType optional
+	 * @param creatorPublicKey optional
+	 * @return list of transactions, or empty if none.
+	 * @throws DataException
+	 */
+	public List<TransactionData> getUnconfirmedTransactions(TransactionType txType, byte[] creatorPublicKey) throws DataException;
+
+	/**
+	 * Returns list of unconfirmed transactions excluding specified type(s).
+	 * 
+	 * @return list of transactions, or empty if none.
+	 * @throws DataException
+	 */
+	public List<TransactionData> getUnconfirmedTransactions(EnumSet<TransactionType> excludedTxTypes) throws DataException;
 
 	/**
 	 * Remove transaction from unconfirmed transactions pile.

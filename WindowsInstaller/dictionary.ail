@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<DICTIONARY type="multilanguage">
+  <!-- Control table -->
+  <ENTRY id="Control.Text.CustomizeDataPathDlg#Description">
+    <STRING lang="en" value="Do you want to store the blockchain, and other data, in a specific folder?"/>
+	<STRING lang="ru" value="Вы можете выбрать место хранения блокчейна и других данных."/>
+    <STRING lang="zh" value="你想把区块链数据存放在一个特定的文件夹吗？"/>
+    <STRING lang="zh_TW" value="你想把区块链数据存放在一个特定的文件夹吗？"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.CustomizeDataPathDlg#Text">
+    <STRING lang="en" value="Select one of the options below, then click &quot;Next&quot;."/>
+	<STRING lang="ru" value="Выберите один из вариантов ниже, затем нажмите Далее"/>
+    <STRING lang="zh" value="请选择，然后“下一步”"/>
+    <STRING lang="zh_TW" value="请选择，然后“下一步”"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.CustomizeDataPathDlg#Title">
+    <STRING lang="en" value="Choose Custom Data Storage Folder?"/>
+	<STRING lang="ru" value="Выберите место хранения данных."/>
+    <STRING lang="zh" value="选择数据保存的文件夹?"/>
+    <STRING lang="zh_TW" value="选择数据保存的文件夹?"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.CustomizeDbDlg#Description">
+    <STRING lang="en" value="Do you want to store the blockchain, and other data, in a specific folder?"/>
+	<STRING lang="ru" value="Вы можете выбрать место хранения блокчейна и других данных."/>
+    <STRING lang="zh" value="Do you want to store the blockchain, and other data, in a specific folder?"/>
+    <STRING lang="zh_TW" value="Do you want to store the blockchain, and other data, in a specific folder?"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.CustomizeDbDlg#Title">
+    <STRING lang="en" value="Choose Custom Data Storage Folder?"/>
+	<STRING lang="ru" value="Выберите место хранения данных."/>
+    <STRING lang="zh" value="Choose Custom Data Storage Folder?"/>
+    <STRING lang="zh_TW" value="Choose Custom Data Storage Folder?"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.DataFolderDlg#Description">
+    <STRING lang="en" value="This is the folder where the blockchain, and other data, will be stored."/>
+	<STRING lang="ru" value="Это папка, в которой будет храниться блокчейн и другие данные."/>
+    <STRING lang="zh" value="这里是区块链及其它数据存放的文件夹"/>
+    <STRING lang="zh_TW" value="这里是区块链及其它数据存放的文件夹"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.DataFolderDlg#Text">
+    <STRING lang="en" value="To store data in this folder, click &quot;[Text_Next]&quot;. To store data in a different folder, enter it below or click &quot;Browse&quot;."/>
+	<STRING lang="ru" value="Чтобы сохранить данные в этой папке, нажмите &quot;[Text_Next]&quot;. Чтобы сохранить данные в другой папке, введите ее ниже или нажмите &quot;Обзор&quot;."/>
+    <STRING lang="zh" value="如果存放在这个文件夹，点 “下一步”。如果存放在其它位置，请选择“浏览”。"/>
+    <STRING lang="zh_TW" value="如果存放在这个文件夹，点 “下一步”。如果存放在其它位置，请选择“浏览”。"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.DataFolderDlg#Title">
+    <STRING lang="en" value="Select Data Storage Folder"/>
+	<STRING lang="ru" value="Выберите папку для хранения данных"/>
+    <STRING lang="zh" value="请选择文件存储地方"/>
+    <STRING lang="zh_TW" value="请选择文件存储地方"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.DbFolderDlg#Description">
+    <STRING lang="en" value="This is the folder where the blockchain, and other data, will be stored."/>
+	<STRING lang="ru" value="Это папка, в которой будет храниться блокчейн и другие данные."/>
+    <STRING lang="zh" value="This is the folder where the blockchain, and other data, will be stored."/>
+    <STRING lang="zh_TW" value="This is the folder where the blockchain, and other data, will be stored."/>
+  </ENTRY>
+  <ENTRY id="Control.Text.DbFolderDlg#Title">
+    <STRING lang="en" value="Select Data Storage Folder"/>
+	<STRING lang="ru" value="Выберите папку для хранения данных"/>
+    <STRING lang="zh" value="请选择文件存储地方"/>
+    <STRING lang="zh_TW" value="请选择文件存储地方"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.NTPDialog#Description">
+    <STRING lang="en" value="Reconfigure Windows for more accurate time?"/>
+	<STRING lang="ru" value="Настроить синхронизацию времени системы Windows?"/>
+    <STRING lang="zh" value="重新配置Windows以获得更准确的时间？"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.NTPDialog#Text_1">
+    <STRING lang="en" value="An accurate Windows clock is required to connect to the [ProductName] network and make transactions."/>
+	<STRING lang="ru" value="Для подключения к сети Qortal и совершения транзакций требуется точная настройка времени Windows"/>
+    <STRING lang="zh" value="需要准确的Windows时钟才能连接到[ProductName]网络并进行交易。"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.NTPDialog#Text_2">
+    <STRING lang="en" value="Select one of the options below, then click &quot;Next&quot;."/>
+	<STRING lang="ru" value="Выберите один из вариантов ниже, затем нажмите"/>
+    <STRING lang="zh" value="请选择，然后“下一步”"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.NTPDialog#Text_3">
+    <STRING lang="en" value="Your computer&apos;s clock needs to be accurate to within 0.5 seconds."/>
+	<STRING lang="ru" value="Точность времени вашего компьютера должна составлять 0.5 секунд."/>
+    <STRING lang="zh" value="您的计算机时钟需要准确到0.5秒内。"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.NTPDialog#Title">
+    <STRING lang="en" value="Windows clock accuracy"/>
+	<STRING lang="ru" value="Настройка времени системы Windows"/>
+    <STRING lang="zh" value="Windows 时钟精度"/>
+  </ENTRY>
+  <ENTRY id="Control.Text.VerifyRemoveDlg#RemoveBlockchainCheckbox">
+    <STRING lang="en" value="Remove downloaded blockchain and other data"/>
+	<STRING lang="ru" value="Удалить загруженный блокчейн и другие данные"/>
+    <STRING lang="zh" value="删除您下载的区块链"/>
+  </ENTRY>
+  <!-- RadioButton table -->
+  <ENTRY id="RadioButton.Text.CUSTOM_DB_BOOL#choose">
+    <STRING lang="en" value="Choose custom data storage folder..."/>
+	<STRING lang="ru" value="Выбрать папку для хранения данных..."/>
+    <STRING lang="zh" value="选择特定的文件夹存储"/>
+    <STRING lang="zh_TW" value="选择特定的文件夹存储"/>
+  </ENTRY>
+  <ENTRY id="RadioButton.Text.CUSTOM_DB_BOOL#default">
+    <STRING lang="en" value="Use default location "/>
+	<STRING lang="ru" value="Использовать папку по умолчанию"/>
+    <STRING lang="zh" value="使用默认存储地点"/>
+    <STRING lang="zh_TW" value="使用默认存储地点"/>
+  </ENTRY>
+  <ENTRY id="RadioButton.Text.RECONFIG_NTP#1">
+    <STRING lang="en" value="Yes, configure Windows to use internet time servers (Recommended)"/>
+	<STRING lang="ru" value="Да, настроить синхронизацию времени Windows (Рекомендуется)"/>
+    <STRING lang="zh" value="是，将Windows配置为使用多个Internet时间服务器 (推荐的)"/>
+  </ENTRY>
+  <ENTRY id="RadioButton.Text.RECONFIG_NTP#2">
+    <STRING lang="en" value="No, I will manage clock accuracy myself"/>
+	<STRING lang="ru" value="Нет, я сам буду управлять настройками часов"/>
+    <STRING lang="zh" value="不，我会自己管理时钟精度。"/>
+  </ENTRY>
+</DICTIONARY>

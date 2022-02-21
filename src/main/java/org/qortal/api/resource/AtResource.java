@@ -25,7 +25,6 @@ import org.qortal.api.ApiError;
 import org.qortal.api.ApiErrors;
 import org.qortal.api.ApiException;
 import org.qortal.api.ApiExceptionFactory;
-import org.qortal.at.QortalAtLoggerFactory;
 import org.qortal.data.at.ATData;
 import org.qortal.data.at.ATStateData;
 import org.qortal.data.transaction.DeployAtTransactionData;
@@ -147,8 +146,7 @@ public class AtResource {
 			ATStateData atStateData = repository.getATRepository().getLatestATState(atAddress);
 			byte[] stateData = atStateData.getStateData();
 
-			QortalAtLoggerFactory loggerFactory = QortalAtLoggerFactory.getInstance();
-			byte[] dataBytes = MachineState.extractDataBytes(loggerFactory, stateData);
+			byte[] dataBytes = MachineState.extractDataBytes(stateData);
 
 			return dataBytes;
 		} catch (ApiException e) {

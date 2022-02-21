@@ -25,7 +25,7 @@ public abstract class Message {
 	private static final int MAGIC_LENGTH = 4;
 	private static final int CHECKSUM_LENGTH = 4;
 
-	private static final int MAX_DATA_SIZE = 1024 * 1024; // 1MB
+	private static final int MAX_DATA_SIZE = 10 * 1024 * 1024; // 10MB
 
 	@SuppressWarnings("serial")
 	public static class MessageException extends Exception {
@@ -80,7 +80,18 @@ public abstract class Message {
 		GET_ONLINE_ACCOUNTS(81),
 
 		ARBITRARY_DATA(90),
-		GET_ARBITRARY_DATA(91);
+		GET_ARBITRARY_DATA(91),
+
+		BLOCKS(100),
+		GET_BLOCKS(101),
+
+		ARBITRARY_DATA_FILE(110),
+		GET_ARBITRARY_DATA_FILE(111),
+
+		ARBITRARY_DATA_FILE_LIST(120),
+		GET_ARBITRARY_DATA_FILE_LIST(121),
+
+		ARBITRARY_SIGNATURES(130);
 
 		public final int value;
 		public final Method fromByteBufferMethod;
@@ -160,85 +171,81 @@ public abstract class Message {
 	/**
 	 * Attempt to read a message from byte buffer.
 	 * 
-	 * @param byteBuffer
+	 * @param readOnlyBuffer
 	 * @return null if no complete message can be read
 	 * @throws MessageException
 	 */
-	public static Message fromByteBuffer(ByteBuffer byteBuffer) throws MessageException {
+	public static Message fromByteBuffer(ByteBuffer readOnlyBuffer) throws MessageException {
 		try {
-			byteBuffer.flip();
-
-			ByteBuffer readBuffer = byteBuffer.asReadOnlyBuffer();
-
 			// Read only enough bytes to cover Message "magic" preamble
 			byte[] messageMagic = new byte[MAGIC_LENGTH];
-			readBuffer.get(messageMagic);
+			readOnlyBuffer.get(messageMagic);
 
 			if (!Arrays.equals(messageMagic, Network.getInstance().getMessageMagic()))
 				// Didn't receive correct Message "magic"
 				throw new MessageException("Received incorrect message 'magic'");
 
 			// Find supporting object
-			int typeValue = readBuffer.getInt();
+			int typeValue = readOnlyBuffer.getInt();
 			MessageType messageType = MessageType.valueOf(typeValue);
 			if (messageType == null)
 				// Unrecognised message type
 				throw new MessageException(String.format("Received unknown message type [%d]", typeValue));
 
 			// Optional message ID
-			byte hasId = readBuffer.get();
+			byte hasId = readOnlyBuffer.get();
 			int id = -1;
 			if (hasId != 0) {
-				id = readBuffer.getInt();
+				id = readOnlyBuffer.getInt();
 
 				if (id <= 0)
 					// Invalid ID
 					throw new MessageException("Invalid negative ID");
 			}
 
-			int dataSize = readBuffer.getInt();
+			int dataSize = readOnlyBuffer.getInt();
 
 			if (dataSize > MAX_DATA_SIZE)
 				// Too large
 				throw new MessageException(String.format("Declared data length %d larger than max allowed %d", dataSize, MAX_DATA_SIZE));
 
+			// Don't have all the data yet?
+			if (dataSize > 0 && dataSize + CHECKSUM_LENGTH > readOnlyBuffer.remaining())
+				return null;
+
 			ByteBuffer dataSlice = null;
 			if (dataSize > 0) {
 				byte[] expectedChecksum = new byte[CHECKSUM_LENGTH];
-				readBuffer.get(expectedChecksum);
+				readOnlyBuffer.get(expectedChecksum);
 
-				// Remember this position in readBuffer so we can pass to Message subclass
-				dataSlice = readBuffer.slice();
-
-				// Consume data from buffer
-				byte[] data = new byte[dataSize];
-				readBuffer.get(data);
-
-				// We successfully read all the data bytes, so we can set limit on dataSlice
+				// Slice data in readBuffer so we can pass to Message subclass
+				dataSlice = readOnlyBuffer.slice();
 				dataSlice.limit(dataSize);
 
 				// Test checksum
-				byte[] actualChecksum = generateChecksum(data);
+				byte[] actualChecksum = generateChecksum(dataSlice);
 				if (!Arrays.equals(expectedChecksum, actualChecksum))
 					throw new MessageException("Message checksum incorrect");
+
+				// Reset position after being consumed by generateChecksum
+				dataSlice.position(0);
+				// Update position in readOnlyBuffer
+				readOnlyBuffer.position(readOnlyBuffer.position() + dataSize);
 			}
 
-			Message message = messageType.fromByteBuffer(id, dataSlice);
-
-			// We successfully read a message, so bump byteBuffer's position to reflect this
-			byteBuffer.position(readBuffer.position());
-
-			return message;
+			return messageType.fromByteBuffer(id, dataSlice);
 		} catch (BufferUnderflowException e) {
 			// Not enough bytes to fully decode message...
 			return null;
-		} finally {
-			byteBuffer.compact();
 		}
 	}
 
 	protected static byte[] generateChecksum(byte[] data) {
 		return Arrays.copyOfRange(Crypto.digest(data), 0, CHECKSUM_LENGTH);
+	}
+
+	protected static byte[] generateChecksum(ByteBuffer dataBuffer) {
+		return Arrays.copyOfRange(Crypto.digest(dataBuffer), 0, CHECKSUM_LENGTH);
 	}
 
 	public byte[] toBytes() throws MessageException {

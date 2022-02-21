@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.qortal.data.account.AccountBalanceData;
 import org.qortal.data.account.AccountData;
+import org.qortal.data.account.EligibleQoraHolderData;
 import org.qortal.data.account.MintingAccountData;
 import org.qortal.data.account.QortFromQoraData;
 import org.qortal.data.account.RewardShareData;
@@ -89,6 +90,13 @@ public interface AccountRepository {
 	 */
 	public int modifyMintedBlockCount(String address, int delta) throws DataException;
 
+	/**
+	 * Modifies batch of accounts' minted block count only.
+	 * <p>
+	 * This is a one-shot, batch version of modifyMintedBlockCount(String, int) above.
+	 */
+	public void modifyMintedBlockCounts(List<String> addresses, int delta) throws DataException;
+
 	/** Delete account from repository. */
 	public void delete(String address) throws DataException;
 
@@ -106,6 +114,9 @@ public interface AccountRepository {
 	 */
 	public AccountBalanceData getBalance(String address, long assetId) throws DataException;
 
+	/** Returns all account balances for given assetID, optionally excluding zero balances. */
+	public List<AccountBalanceData> getAssetBalances(long assetId, Boolean excludeZero) throws DataException;
+
 	/** How to order results when fetching asset balances. */
 	public enum BalanceOrdering {
 		/** assetID first, then balance, then account address */
@@ -116,14 +127,17 @@ public interface AccountRepository {
 		ASSET_ACCOUNT
 	}
 
-	/** Returns all account balances for given assetID, optionally excluding zero balances. */
-	public List<AccountBalanceData> getAssetBalances(long assetId, Boolean excludeZero) throws DataException;
-
 	/** Returns account balances for matching addresses / assetIDs, optionally excluding zero balances, with pagination, used by API. */
 	public List<AccountBalanceData> getAssetBalances(List<String> addresses, List<Long> assetIds, BalanceOrdering balanceOrdering, Boolean excludeZero, Integer limit, Integer offset, Boolean reverse) throws DataException;
 
 	/** Modifies account's asset balance by <tt>deltaBalance</tt>. */
 	public void modifyAssetBalance(String address, long assetId, long deltaBalance) throws DataException;
+
+	/** Modifies a batch of account asset balances, treating AccountBalanceData.balance as <tt>deltaBalance</tt>. */
+	public void modifyAssetBalances(List<AccountBalanceData> accountBalanceDeltas) throws DataException;
+
+	/** Batch update of account asset balances. */
+	public void setAssetBalances(List<AccountBalanceData> accountBalances) throws DataException;
 
 	public void save(AccountBalanceData accountBalanceData) throws DataException;
 
@@ -156,6 +170,16 @@ public interface AccountRepository {
 	 */
 	public RewardShareData getRewardShareByIndex(int index) throws DataException;
 
+	/**
+	 * Returns list of reward-share data using array of indexes into list of reward-shares (sorted by reward-share public key).
+	 * <p>
+	 * This is a one-shot, batch form of the above <tt>getRewardShareByIndex(int)</tt> call.
+	 * 
+	 * @return list of reward-share data, or null if one (or more) index is invalid
+	 * @throws DataException
+	 */
+	public List<RewardShareData> getRewardSharesByIndexes(int[] indexes) throws DataException;
+
 	public boolean rewardShareExists(byte[] rewardSharePublicKey) throws DataException;
 
 	public void save(RewardShareData rewardShareData) throws DataException;
@@ -167,15 +191,17 @@ public interface AccountRepository {
 
 	public List<MintingAccountData> getMintingAccounts() throws DataException;
 
+	public MintingAccountData getMintingAccount(byte[] mintingAccountKey) throws DataException;
+
 	public void save(MintingAccountData mintingAccountData) throws DataException;
 
-	/** Delete minting account info, used by BlockMinter, from repository using passed private key. */
-	public int delete(byte[] mintingAccountPrivateKey) throws DataException;
+	/** Delete minting account info, used by BlockMinter, from repository using passed public or private key. */
+	public int delete(byte[] mintingAccountKey) throws DataException;
 
 	// Managing QORT from legacy QORA
 
 	/**
-	 * Returns balance data for accounts with legacy QORA asset that are eligible
+	 * Returns full info for accounts with legacy QORA asset that are eligible
 	 * for more block reward (block processing) or for block reward removal (block orphaning).
 	 * <p>
 	 * For block processing, accounts that have already received their final QORT reward for owning
@@ -187,7 +213,7 @@ public interface AccountRepository {
 	 * @param blockHeight QORT reward must have be present at this height (for orphaning only)
 	 * @throws DataException
 	 */
-	public List<AccountBalanceData> getEligibleLegacyQoraHolders(Integer blockHeight) throws DataException;
+	public List<EligibleQoraHolderData> getEligibleLegacyQoraHolders(Integer blockHeight) throws DataException;
 
 	public QortFromQoraData getQortFromQoraInfo(String address) throws DataException;
 

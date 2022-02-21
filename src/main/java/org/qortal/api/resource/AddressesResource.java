@@ -7,18 +7,16 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import javax.servlet.http.HttpServletRequest;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.QueryParam;
+import javax.ws.rs.*;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 
@@ -37,6 +35,7 @@ import org.qortal.crypto.Crypto;
 import org.qortal.data.account.AccountData;
 import org.qortal.data.account.RewardShareData;
 import org.qortal.data.network.OnlineAccountData;
+import org.qortal.data.network.OnlineAccountLevel;
 import org.qortal.data.transaction.PublicizeTransactionData;
 import org.qortal.data.transaction.RewardShareTransactionData;
 import org.qortal.data.transaction.TransactionData;
@@ -174,6 +173,66 @@ public class AddressesResource {
 			}
 
 			return apiOnlineAccounts;
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
+	@GET
+	@Path("/online/levels")
+	@Operation(
+			summary = "Return currently 'online' accounts counts, grouped by level",
+			responses = {
+					@ApiResponse(
+							description = "online accounts",
+							content = @Content(mediaType = MediaType.APPLICATION_JSON, array = @ArraySchema(schema = @Schema(implementation = ApiOnlineAccount.class)))
+					)
+			}
+	)
+	@ApiErrors({ApiError.PUBLIC_KEY_NOT_FOUND, ApiError.REPOSITORY_ISSUE})
+	public List<OnlineAccountLevel> getOnlineAccountsByLevel() {
+		List<OnlineAccountData> onlineAccounts = Controller.getInstance().getOnlineAccounts();
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			List<OnlineAccountLevel> onlineAccountLevels = new ArrayList<>();
+
+			for (OnlineAccountData onlineAccountData : onlineAccounts) {
+				try {
+					final int minterLevel = Account.getRewardShareEffectiveMintingLevelIncludingLevelZero(repository, onlineAccountData.getPublicKey());
+
+					OnlineAccountLevel onlineAccountLevel = onlineAccountLevels.stream()
+							.filter(a -> a.getLevel() == minterLevel)
+							.findFirst().orElse(null);
+
+					// Note: I don't think we can use the level as the List index here because there will be gaps.
+					// So we are forced to manually look up the existing item each time.
+					// There's probably a nice shorthand java way of doing this, but this approach gets the same result.
+
+					if (onlineAccountLevel == null) {
+						// No entry exists for this level yet, so create one
+						onlineAccountLevel = new OnlineAccountLevel(minterLevel, 1);
+						onlineAccountLevels.add(onlineAccountLevel);
+					}
+					else {
+						// Already exists - so increment the count
+						int existingCount = onlineAccountLevel.getCount();
+						onlineAccountLevel.setCount(++existingCount);
+
+						// Then replace the existing item
+						int index = onlineAccountLevels.indexOf(onlineAccountLevel);
+						onlineAccountLevels.set(index, onlineAccountLevel);
+					}
+
+				} catch (DataException e) {
+					continue;
+				}
+			}
+
+			// Sort by level
+			onlineAccountLevels.sort(Comparator.comparingInt(OnlineAccountLevel::getLevel));
+
+			return onlineAccountLevels;
+
 		} catch (DataException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
 		}
@@ -473,7 +532,8 @@ public class AddressesResource {
 		}
 	)
 	@ApiErrors({ApiError.TRANSACTION_INVALID, ApiError.INVALID_DATA, ApiError.TRANSFORMATION_ERROR, ApiError.REPOSITORY_ISSUE})
-	public String computePublicize(String rawBytes58) {
+	@SecurityRequirement(name = "apiKey")
+	public String computePublicize(@HeaderParam(Security.API_KEY_HEADER) String apiKey, String rawBytes58) {
 		Security.checkApiCallAllowed(request);
 
 		try (final Repository repository = RepositoryManager.getRepository()) {

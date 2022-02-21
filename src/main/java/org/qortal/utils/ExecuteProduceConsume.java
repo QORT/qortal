@@ -125,8 +125,8 @@ public abstract class ExecuteProduceConsume implements Runnable {
 			// It's possible this might need to become a class instance private volatile
 			boolean canBlock = false;
 
-			while (true) {
-				final Task task;
+			while (!Thread.currentThread().isInterrupted()) {
+				Task task = null;
 
 				this.logger.trace(() -> String.format("[%d] waiting to produce...", Thread.currentThread().getId()));
 
@@ -142,7 +142,16 @@ public abstract class ExecuteProduceConsume implements Runnable {
 							Thread.currentThread().getId(), this.activeThreadCount, this.consumerCount, lambdaCanIdle));
 
 					final long beforeProduce = isLoggerTraceEnabled ? System.currentTimeMillis() : 0;
-					task = produceTask(canBlock);
+
+					try {
+						task = produceTask(canBlock);
+					} catch (InterruptedException e) {
+						// We're in shutdown situation so exit
+						Thread.currentThread().interrupt();
+					} catch (Exception e) {
+						this.logger.warn(() -> String.format("[%d] exception while trying to produce task", Thread.currentThread().getId()), e);
+					}
+
 					this.logger.trace(() -> String.format("[%d] producing took %dms", Thread.currentThread().getId(), System.currentTimeMillis() - beforeProduce));
 				}
 
@@ -155,7 +164,8 @@ public abstract class ExecuteProduceConsume implements Runnable {
 							--this.activeThreadCount;
 							this.logger.trace(() -> String.format("[%d] ending, activeThreadCount now: %d",
 									Thread.currentThread().getId(), this.activeThreadCount));
-							break;
+
+							return;
 						}
 
 						// We're the last surviving thread - producer can afford to block next round
@@ -192,7 +202,16 @@ public abstract class ExecuteProduceConsume implements Runnable {
 				}
 
 				this.logger.trace(() -> String.format("[%d] performing task...", Thread.currentThread().getId()));
-				task.perform(); // This can block for a while
+
+				try {
+					task.perform(); // This can block for a while
+				} catch (InterruptedException e) {
+					// We're in shutdown situation so exit
+					Thread.currentThread().interrupt();
+				} catch (Exception e) {
+					this.logger.warn(() -> String.format("[%d] exception while performing task", Thread.currentThread().getId()), e);
+				}
+
 				this.logger.trace(() -> String.format("[%d] finished task", Thread.currentThread().getId()));
 
 				synchronized (this) {
@@ -206,8 +225,6 @@ public abstract class ExecuteProduceConsume implements Runnable {
 					canBlock = false;
 				}
 			}
-		} catch (InterruptedException e) {
-			// We're in shutdown situation so exit
 		} finally {
 			if (this.isLoggerTraceEnabled)
 				Thread.currentThread().setName(this.className);

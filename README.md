@@ -9,4 +9,4 @@
 - Create basic *settings.json* file: `echo '{}' > settings.json`
 - Run JAR in same working directory as *settings.json*: `java -jar target/qortal-1.0.jar`
 - Wrap in shell script, add JVM flags, redirection, backgrounding, etc. as necessary.
-- Or use supplied example shell script: *run.sh*
+- Or use supplied example shell script: *start.sh*

@@ -1,5 +1,7 @@
 package org.qortal.controller;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -27,22 +29,34 @@ public class ChatNotifier {
 		return instance;
 	}
 
-	public synchronized void register(Session session, Listener listener) {
-		this.listenersBySession.put(session, listener);
+	public void register(Session session, Listener listener) {
+		synchronized (this.listenersBySession) {
+			this.listenersBySession.put(session, listener);
+		}
 	}
 
-	public synchronized void deregister(Session session) {
-		this.listenersBySession.remove(session);
+	public void deregister(Session session) {
+		synchronized (this.listenersBySession) {
+			this.listenersBySession.remove(session);
+		}
 	}
 
-	public synchronized void onNewChatTransaction(ChatTransactionData chatTransactionData) {
-		for (Listener listener : this.listenersBySession.values())
+	public void onNewChatTransaction(ChatTransactionData chatTransactionData) {
+		for (Listener listener : getAllListeners())
 			listener.notify(chatTransactionData);
 	}
 
-	public synchronized void onGroupMembershipChange() {
-		for (Listener listener : this.listenersBySession.values())
+	public void onGroupMembershipChange() {
+		for (Listener listener : getAllListeners())
 			listener.notify(null);
+	}
+
+	private Collection<Listener> getAllListeners() {
+		// Make a copy of listeners to both avoid concurrent modification
+		// and reduce synchronization time
+		synchronized (this.listenersBySession) {
+			return new ArrayList<>(this.listenersBySession.values());
+		}
 	}
 
 }

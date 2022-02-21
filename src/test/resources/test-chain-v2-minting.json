@@ -5,6 +5,7 @@
 	"maxBlockSize": 2097152,
 	"maxBytesPerUnitFee": 1024,
 	"unitFee": "0.1",
+	"nameRegistrationUnitFee": "5",
 	"requireGroupForApproval": false,
 	"minAccountLevelToRewardShare": 5,
 	"maxRewardSharesPerMintingAccount": 20,
@@ -44,7 +45,12 @@
 		"powfixTimestamp": 0,
 		"qortalTimestamp": 0,
 		"newAssetPricingTimestamp": 0,
-		"groupApprovalTimestamp": 0
+		"groupApprovalTimestamp": 0,
+		"atFindNextTransactionFix": 0,
+		"newBlockSigHeight": 999999,
+		"shareBinFix": 999999,
+		"calcChainWeightTimestamp": 0,
+		"transactionV5Timestamp": 0
 	},
 	"genesisInfo": {
 		"version": 4,

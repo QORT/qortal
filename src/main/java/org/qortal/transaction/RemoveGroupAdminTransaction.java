@@ -88,6 +88,11 @@ public class RemoveGroupAdminTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Update Group adminship
 		Group group = new Group(this.repository, this.removeGroupAdminTransactionData.getGroupId());

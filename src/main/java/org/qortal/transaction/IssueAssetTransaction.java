@@ -93,6 +93,11 @@ public class IssueAssetTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Issue asset
 		Asset asset = new Asset(this.repository, this.issueAssetTransactionData);

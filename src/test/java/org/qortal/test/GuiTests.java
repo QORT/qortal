@@ -2,10 +2,12 @@ package org.qortal.test;
 
 import java.awt.TrayIcon.MessageType;
 
+import org.junit.Ignore;
 import org.junit.Test;
 import org.qortal.gui.SplashFrame;
 import org.qortal.gui.SysTray;
 
+@Ignore
 public class GuiTests {
 
 	@Test

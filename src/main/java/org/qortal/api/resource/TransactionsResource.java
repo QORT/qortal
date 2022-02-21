@@ -9,6 +9,8 @@ import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -44,6 +46,7 @@ import org.qortal.transform.transaction.TransactionTransformer;
 import org.qortal.utils.Base58;
 
 import com.google.common.primitives.Bytes;
+import org.qortal.utils.NTP;
 
 @Path("/transactions")
 @Tag(name = "Transactions")
@@ -348,7 +351,7 @@ public class TransactionsResource {
 
 		try (final Repository repository = RepositoryManager.getRepository()) {
 			List<byte[]> signatures = repository.getTransactionRepository().getSignaturesMatchingCriteria(startBlock, blockLimit, txGroupId,
-					txTypes, null, address, confirmationStatus, limit, offset, reverse);
+					txTypes, null, null, address, confirmationStatus, limit, offset, reverse);
 
 			// Expand signatures to transactions
 			List<TransactionData> transactions = new ArrayList<>(signatures.size());
@@ -360,6 +363,83 @@ public class TransactionsResource {
 			throw e;
 		} catch (DataException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
+	@GET
+	@Path("/unitfee")
+	@Operation(
+			summary = "Get transaction unit fee",
+			responses = {
+					@ApiResponse(
+							content = @Content(
+									mediaType = MediaType.TEXT_PLAIN,
+									schema = @Schema(
+											type = "number"
+									)
+							)
+					)
+			}
+	)
+	@ApiErrors({
+			ApiError.INVALID_CRITERIA, ApiError.REPOSITORY_ISSUE
+	})
+	public long getTransactionUnitFee(@QueryParam("txType") TransactionType txType,
+                                      @QueryParam("timestamp") Long timestamp,
+									  @QueryParam("level") Integer accountLevel) {
+		try {
+			if (timestamp == null) {
+				timestamp = NTP.getTime();
+			}
+
+			Constructor<?> constructor = txType.constructor;
+			Transaction transaction = (Transaction) constructor.newInstance(null, null);
+			// FUTURE: add accountLevel parameter to transaction.getUnitFee() if needed
+			return transaction.getUnitFee(timestamp);
+
+		} catch (InstantiationException | IllegalAccessException | InvocationTargetException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_CRITERIA, e);
+		}
+	}
+
+	@POST
+	@Path("/fee")
+	@Operation(
+			summary = "Get recommended fee for supplied transaction data",
+			requestBody = @RequestBody(
+					required = true,
+					content = @Content(
+							mediaType = MediaType.TEXT_PLAIN,
+							schema = @Schema(
+									type = "string"
+							)
+					)
+			)
+	)
+	@ApiErrors({
+			ApiError.INVALID_CRITERIA, ApiError.REPOSITORY_ISSUE
+	})
+	public long getRecommendedTransactionFee(String rawInputBytes58) {
+		byte[] rawInputBytes = Base58.decode(rawInputBytes58);
+		if (rawInputBytes.length == 0)
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.JSON);
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			// Append null signature on the end before transformation
+			byte[] rawBytes = Bytes.concat(rawInputBytes, new byte[TransactionTransformer.SIGNATURE_LENGTH]);
+
+			TransactionData transactionData = TransactionTransformer.fromBytes(rawBytes);
+			if (transactionData == null)
+				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
+
+			Transaction transaction = Transaction.fromData(repository, transactionData);
+			return transaction.calcRecommendedFee();
+
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}  catch (TransformationException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.TRANSFORMATION_ERROR, e);
 		}
 	}
 
@@ -418,32 +498,83 @@ public class TransactionsResource {
 	}
 
 	@POST
-	@Path("/sign")
+	@Path("/convert")
 	@Operation(
-		summary = "Sign a raw, unsigned transaction",
-		requestBody = @RequestBody(
-			required = true,
-			content = @Content(
-				mediaType = MediaType.APPLICATION_JSON,
-				schema = @Schema(
-					implementation = SimpleTransactionSignRequest.class
-				)
-			)
-		),
-		responses = {
-			@ApiResponse(
-				description = "raw, signed transaction encoded in Base58",
-				content = @Content(
-					mediaType = MediaType.TEXT_PLAIN,
-					schema = @Schema(
-						type = "string"
+			summary = "Convert transaction bytes into bytes for signing",
+			requestBody = @RequestBody(
+					required = true,
+					content = @Content(
+							mediaType = MediaType.TEXT_PLAIN,
+							schema = @Schema(
+									type = "string",
+									description = "raw, unsigned transaction in base58 encoding",
+									example = "raw transaction base58"
+							)
 					)
-				)
-			)
-		}
+			),
+			responses = {
+					@ApiResponse(
+							description = "raw, unsigned transaction encoded in Base58, ready for signing",
+							content = @Content(
+									mediaType = MediaType.TEXT_PLAIN,
+									schema = @Schema(
+											type = "string"
+									)
+							)
+					)
+			}
 	)
 	@ApiErrors({
-		ApiError.NON_PRODUCTION, ApiError.INVALID_PRIVATE_KEY, ApiError.TRANSFORMATION_ERROR
+			ApiError.NON_PRODUCTION, ApiError.TRANSFORMATION_ERROR
+	})
+	public String convertTransactionForSigning(String rawInputBytes58) {
+		byte[] rawInputBytes = Base58.decode(rawInputBytes58);
+		if (rawInputBytes.length == 0)
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.JSON);
+
+		try {
+			// Append null signature on the end before transformation
+			byte[] rawBytes = Bytes.concat(rawInputBytes, new byte[TransactionTransformer.SIGNATURE_LENGTH]);
+
+			TransactionData transactionData = TransactionTransformer.fromBytes(rawBytes);
+			if (transactionData == null)
+				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
+
+			byte[] convertedBytes = TransactionTransformer.toBytesForSigning(transactionData);
+
+			return Base58.encode(convertedBytes);
+		} catch (TransformationException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.TRANSFORMATION_ERROR, e);
+		}
+	}
+
+	@POST
+	@Path("/sign")
+	@Operation(
+			summary = "Sign a raw, unsigned transaction",
+			requestBody = @RequestBody(
+					required = true,
+					content = @Content(
+							mediaType = MediaType.APPLICATION_JSON,
+							schema = @Schema(
+									implementation = SimpleTransactionSignRequest.class
+							)
+					)
+			),
+			responses = {
+					@ApiResponse(
+							description = "raw, signed transaction encoded in Base58",
+							content = @Content(
+									mediaType = MediaType.TEXT_PLAIN,
+									schema = @Schema(
+											type = "string"
+									)
+							)
+					)
+			}
+	)
+	@ApiErrors({
+			ApiError.NON_PRODUCTION, ApiError.INVALID_PRIVATE_KEY, ApiError.TRANSFORMATION_ERROR
 	})
 	public String signTransaction(SimpleTransactionSignRequest signRequest) {
 		if (Settings.getInstance().isApiRestricted())
@@ -510,14 +641,19 @@ public class TransactionsResource {
 		if (!Controller.getInstance().isUpToDate())
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.BLOCKCHAIN_NEEDS_SYNC);
 
+		byte[] rawBytes = Base58.decode(rawBytes58);
+
+		TransactionData transactionData;
+		try {
+			transactionData = TransactionTransformer.fromBytes(rawBytes);
+		} catch (TransformationException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.TRANSFORMATION_ERROR, e);
+		}
+
+		if (transactionData == null)
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
+
 		try (final Repository repository = RepositoryManager.getRepository()) {
-			byte[] rawBytes = Base58.decode(rawBytes58);
-
-			TransactionData transactionData = TransactionTransformer.fromBytes(rawBytes);
-
-			if (transactionData == null)
-				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
-
 			Transaction transaction = Transaction.fromData(repository, transactionData);
 
 			if (!transaction.isSignatureValid())
@@ -535,16 +671,9 @@ public class TransactionsResource {
 				blockchainLock.unlock();
 			}
 
-			// Notify controller of new transaction
-			Controller.getInstance().onNewTransaction(transactionData, null);
-
 			return "true";
 		} catch (NumberFormatException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA, e);
-		} catch (TransformationException e) {
-			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.TRANSFORMATION_ERROR, e);
-		} catch (ApiException e) {
-			throw e;
 		} catch (DataException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
 		} catch (InterruptedException e) {

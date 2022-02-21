@@ -81,6 +81,11 @@ public class AtTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public ValidationResult isValid() throws DataException {
 		// Check recipient address is valid
 		if (!Crypto.isValidAddress(this.atTransactionData.getRecipient()))

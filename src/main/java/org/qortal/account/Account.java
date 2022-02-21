@@ -272,7 +272,7 @@ public class Account {
 	/**
 	 * Returns 'effective' minting level, or zero if reward-share does not exist.
 	 * <p>
-	 * For founder accounts, this returns "founderEffectiveMintingLevel" from blockchain config.
+	 * this is being used on src/main/java/org/qortal/api/resource/AddressesResource.java to fulfil the online accounts api call
 	 * 
 	 * @param repository
 	 * @param rewardSharePublicKey
@@ -288,5 +288,26 @@ public class Account {
 		Account rewardShareMinter = new Account(repository, rewardShareData.getMinter());
 		return rewardShareMinter.getEffectiveMintingLevel();
 	}
+	/**
+	 * Returns 'effective' minting level, with a fix for the zero level.
+	 * <p>
+	 * For founder accounts, this returns "founderEffectiveMintingLevel" from blockchain config.
+	 *
+	 * @param repository
+	 * @param rewardSharePublicKey
+	 * @return 0+
+	 * @throws DataException
+	 */
+	public static int getRewardShareEffectiveMintingLevelIncludingLevelZero(Repository repository, byte[] rewardSharePublicKey) throws DataException {
+		// Find actual minter and get their effective minting level
+		RewardShareData rewardShareData = repository.getAccountRepository().getRewardShare(rewardSharePublicKey);
+		if (rewardShareData == null)
+			return 0;
 
+		else if(!rewardShareData.getMinter().equals(rewardShareData.getRecipient()))//the minter is different than the recipient this means sponsorship
+			return 0;
+
+		Account rewardShareMinter = new Account(repository, rewardShareData.getMinter());
+		return rewardShareMinter.getEffectiveMintingLevel();
+	}
 }

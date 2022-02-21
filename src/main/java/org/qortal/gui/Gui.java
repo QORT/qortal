@@ -23,17 +23,21 @@ public class Gui {
 	private SysTray sysTray = null;
 
 	private Gui() {
-		this.isHeadless = GraphicsEnvironment.isHeadless();
+		try {
+			this.isHeadless = GraphicsEnvironment.isHeadless();
 
-		if (!this.isHeadless) {
-			try {
-				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-			} catch (ClassNotFoundException | InstantiationException | IllegalAccessException
-					| UnsupportedLookAndFeelException e) {
-				// Use whatever look-and-feel comes by default then
+			if (!this.isHeadless) {
+				try {
+					UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+				} catch (ClassNotFoundException | InstantiationException | IllegalAccessException
+						| UnsupportedLookAndFeelException e) {
+					// Use whatever look-and-feel comes by default then
+				}
+
+				showSplash();
 			}
-
-			showSplash();
+		} catch (Exception e) {
+			LOGGER.info("Unable to initialize GUI: {}", e.getMessage());
 		}
 	}
 

@@ -2,8 +2,11 @@ package org.qortal.test.common;
 
 import static org.junit.Assert.*;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.URL;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.Security;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,6 +18,7 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -46,9 +50,15 @@ public class Common {
 
 	private static final Logger LOGGER = LogManager.getLogger(Common.class);
 
-	public static final String testConnectionUrl = "jdbc:hsqldb:mem:testdb";
-	// For debugging, use this instead to write DB to disk for examination:
-	// public static final String testConnectionUrl = "jdbc:hsqldb:file:testdb/blockchain;create=true";
+	public static final String testConnectionUrlMemory = "jdbc:hsqldb:mem:testdb";
+	public static final String testConnectionUrlDisk = "jdbc:hsqldb:file:%s/blockchain;create=true";
+
+	// For debugging, use testConnectionUrlDisk instead of memory, to write DB to disk for examination.
+	// This can be achieved using `Common.useSettingsAndDb(Common.testSettingsFilename, false);`
+	// where `false` specifies to use a repository on disk rather than one in memory.
+	// Make sure to also comment out `Common.deleteTestRepository();` in closeRepository() below, so that
+	// the files remain after the test finishes.
+
 
 	public static final String testSettingsFilename = "test-settings-v2.json";
 
@@ -100,7 +110,7 @@ public class Common {
 		return testAccountsByName.values().stream().map(account -> new TestAccount(repository, account)).collect(Collectors.toList());
 	}
 
-	public static void useSettings(String settingsFilename) throws DataException {
+	public static void useSettingsAndDb(String settingsFilename, boolean dbInMemory) throws DataException {
 		closeRepository();
 
 		// Load/check settings, which potentially sets up blockchain config, etc.
@@ -109,9 +119,13 @@ public class Common {
 		assertNotNull("Test settings JSON file not found", testSettingsUrl);
 		Settings.fileInstance(testSettingsUrl.getPath());
 
-		setRepository();
+		setRepository(dbInMemory);
 
 		resetBlockchain();
+	}
+
+	public static void useSettings(String settingsFilename) throws DataException {
+		Common.useSettingsAndDb(settingsFilename, true);
 	}
 
 	public static void useDefaultSettings() throws DataException {
@@ -186,15 +200,33 @@ public class Common {
 		assertTrue(String.format("Non-genesis %s remains", typeName), remainingClone.isEmpty());
 	}
 
-	@BeforeClass
-	public static void setRepository() throws DataException {
-		RepositoryFactory repositoryFactory = new HSQLDBRepositoryFactory(testConnectionUrl);
+	public static void setRepository(boolean inMemory) throws DataException {
+		String connectionUrlDisk = String.format(testConnectionUrlDisk, Settings.getInstance().getRepositoryPath());
+		String connectionUrl = inMemory ? testConnectionUrlMemory : connectionUrlDisk;
+		RepositoryFactory repositoryFactory = new HSQLDBRepositoryFactory(connectionUrl);
 		RepositoryManager.setRepositoryFactory(repositoryFactory);
+	}
+
+	public static void deleteTestRepository() throws DataException {
+		// Delete repository directory if exists
+		Path repositoryPath = Paths.get(Settings.getInstance().getRepositoryPath());
+		try {
+			FileUtils.deleteDirectory(repositoryPath.toFile());
+		} catch (IOException e) {
+			throw new DataException(String.format("Unable to delete test repository: %s", e.getMessage()));
+		}
+	}
+
+	@BeforeClass
+	public static void setRepositoryInMemory() throws DataException {
+		Common.deleteTestRepository();
+		Common.setRepository(true);
 	}
 
 	@AfterClass
 	public static void closeRepository() throws DataException {
 		RepositoryManager.closeRepositoryFactory();
+		Common.deleteTestRepository(); // Comment out this line in you need to inspect the database after running a test
 	}
 
 	// Test assertions

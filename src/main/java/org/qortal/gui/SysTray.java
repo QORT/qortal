@@ -61,7 +61,7 @@ public class SysTray {
 		this.popupMenu = createJPopupMenu();
 
 		// Build TrayIcon without AWT PopupMenu (which doesn't support Unicode)...
-		this.trayIcon = new TrayIcon(Gui.loadImage("icons/icon32.png"), "qortal", null);
+		this.trayIcon = new TrayIcon(Gui.loadImage("icons/qortal_ui_tray_synced.png"), "qortal", null);
 		// ...and attach mouse listener instead so we can use JPopupMenu (which does support Unicode)
 		this.trayIcon.addMouseListener(new MouseAdapter() {
 			@Override
@@ -147,13 +147,13 @@ public class SysTray {
 			}
 		});
 
-		JMenuItem openUi = new JMenuItem(Translator.INSTANCE.translate("SysTray", "OPEN_UI"));
+		/* JMenuItem openUi = new JMenuItem(Translator.INSTANCE.translate("SysTray", "OPEN_UI"));
 		openUi.addActionListener(actionEvent -> {
 			destroyHiddenDialog();
 
 			new OpenUiWorker().execute();
 		});
-		menu.add(openUi);
+		menu.add(openUi); */
 
 		JMenuItem openTimeCheck = new JMenuItem(Translator.INSTANCE.translate("SysTray", "CHECK_TIME_ACCURACY"));
 		openTimeCheck.addActionListener(actionEvent -> {
@@ -287,6 +287,29 @@ public class SysTray {
 	public void setToolTipText(String text) {
 		if (trayIcon != null)
 			this.trayIcon.setToolTip(text);
+	}
+
+	public void setTrayIcon(int iconid) {
+		try {
+			if (trayIcon != null) {
+				switch (iconid) {
+					case 1:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_syncing_time-alt.png"));
+						break;
+					case 2:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_minting.png"));
+						break;
+					case 3:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_syncing.png"));
+						break;
+					case 4:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_synced.png"));
+						break;
+				}
+			}
+		} catch (Exception e) {
+			LOGGER.info("Unable to set tray icon: {}", e.getMessage());
+		}
 	}
 
 	public void dispose() {

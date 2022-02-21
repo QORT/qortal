@@ -1,5 +1,6 @@
 package org.qortal.test;
 
+import org.junit.Ignore;
 import org.junit.Test;
 import org.qortal.crypto.MemoryPoW;
 
@@ -7,6 +8,7 @@ import static org.junit.Assert.*;
 
 import java.util.Random;
 
+@Ignore
 public class MemoryPoWTests {
 
 	private static final int workBufferLength = 8 * 1024 * 1024;

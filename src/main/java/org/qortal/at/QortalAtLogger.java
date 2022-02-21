@@ -691,6 +691,11 @@ public final class QortalAtLogger extends ExtendedLoggerWrapper implements org.c
         logger.logIfEnabled(FQCN, ERROR, null, msgSupplier, (Throwable) null);
     }
 
+    /** Java 8 version */
+    public void error(final java.util.function.Supplier<String> msgSupplier) {
+        logger.logIfEnabled(FQCN, ERROR, null, () -> msgSupplier.get(), (Throwable) null);
+    }
+
     /**
      * Logs a message (only to be constructed if the logging level is the {@code ERROR}
      * level) including the stack trace of the {@link Throwable} <code>t</code> passed as parameter.
@@ -1375,6 +1380,11 @@ public final class QortalAtLogger extends ExtendedLoggerWrapper implements org.c
         logger.logIfEnabled(FQCN, DEBUG, null, msgSupplier, (Throwable) null);
     }
 
+    /** Java 8 version */
+    public void debug(final java.util.function.Supplier<String> msgSupplier) {
+        logger.logIfEnabled(FQCN, DEBUG, null, () -> msgSupplier.get(), (Throwable) null);
+    }
+
     /**
      * Logs a message (only to be constructed if the logging level is the {@code DEBUG}
      * level) including the stack trace of the {@link Throwable} <code>t</code> passed as parameter.
@@ -2057,6 +2067,11 @@ public final class QortalAtLogger extends ExtendedLoggerWrapper implements org.c
      */
     public void echo(final Supplier<?> msgSupplier) {
         logger.logIfEnabled(FQCN, ECHO, null, msgSupplier, (Throwable) null);
+    }
+
+    /** Java 8 version */
+    public void echo(final java.util.function.Supplier<String> msgSupplier) {
+        logger.logIfEnabled(FQCN, ECHO, null, () -> msgSupplier.get(), (Throwable) null);
     }
 
     /**

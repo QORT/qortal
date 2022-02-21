@@ -5,7 +5,7 @@ import org.apache.logging.log4j.Logger;
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.block.Block;
 import org.qortal.block.BlockChain;
-import org.qortal.block.BlockMinter;
+import org.qortal.controller.BlockMinter;
 import org.qortal.data.block.BlockData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;

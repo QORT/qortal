@@ -4,6 +4,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 
+import org.qortal.arbitrary.misc.Service;
 import org.qortal.data.PaymentData;
 import org.qortal.data.transaction.ArbitraryTransactionData;
 import org.qortal.data.transaction.BaseTransactionData;
@@ -20,21 +21,31 @@ public class HSQLDBArbitraryTransactionRepository extends HSQLDBTransactionRepos
 	}
 
 	TransactionData fromBase(BaseTransactionData baseTransactionData) throws DataException {
-		String sql = "SELECT version, service, is_data_raw, data from ArbitraryTransactions WHERE signature = ?";
+		String sql = "SELECT version, nonce, service, size, is_data_raw, data, metadata_hash, " +
+				"name, identifier, update_method, secret, compression from ArbitraryTransactions " +
+				"WHERE signature = ?";
 
 		try (ResultSet resultSet = this.repository.checkedExecute(sql, baseTransactionData.getSignature())) {
 			if (resultSet == null)
 				return null;
 
 			int version = resultSet.getInt(1);
-			int service = resultSet.getInt(2);
-			boolean isDataRaw = resultSet.getBoolean(3); // NOT NULL, so no null to false
+			int nonce = resultSet.getInt(2);
+			Service service = Service.valueOf(resultSet.getInt(3));
+			int size = resultSet.getInt(4);
+			boolean isDataRaw = resultSet.getBoolean(5); // NOT NULL, so no null to false
 			DataType dataType = isDataRaw ? DataType.RAW_DATA : DataType.DATA_HASH;
-			byte[] data = resultSet.getBytes(4);
+			byte[] data = resultSet.getBytes(6);
+			byte[] metadataHash = resultSet.getBytes(7);
+			String name = resultSet.getString(8);
+			String identifier = resultSet.getString(9);
+			ArbitraryTransactionData.Method method = ArbitraryTransactionData.Method.valueOf(resultSet.getInt(10));
+			byte[] secret = resultSet.getBytes(11);
+			ArbitraryTransactionData.Compression compression = ArbitraryTransactionData.Compression.valueOf(resultSet.getInt(12));
 
 			List<PaymentData> payments = this.getPaymentsFromSignature(baseTransactionData.getSignature());
-
-			return new ArbitraryTransactionData(baseTransactionData, version, service, data, dataType, payments);
+			return new ArbitraryTransactionData(baseTransactionData, version, service, nonce, size, name,
+					identifier, method, secret, compression, data, dataType, metadataHash, payments);
 		} catch (SQLException e) {
 			throw new DataException("Unable to fetch arbitrary transaction from repository", e);
 		}
@@ -48,11 +59,19 @@ public class HSQLDBArbitraryTransactionRepository extends HSQLDBTransactionRepos
 		if (arbitraryTransactionData.getVersion() >= 4)
 			this.repository.getArbitraryRepository().save(arbitraryTransactionData);
 
+		// method and compression use NOT NULL DEFAULT 0, so fall back to these values if null
+		Integer method = arbitraryTransactionData.getMethod() != null ? arbitraryTransactionData.getMethod().value : 0;
+		Integer compression = arbitraryTransactionData.getCompression() != null ? arbitraryTransactionData.getCompression().value : 0;
+
 		HSQLDBSaver saveHelper = new HSQLDBSaver("ArbitraryTransactions");
 
 		saveHelper.bind("signature", arbitraryTransactionData.getSignature()).bind("sender", arbitraryTransactionData.getSenderPublicKey())
-				.bind("version", arbitraryTransactionData.getVersion()).bind("service", arbitraryTransactionData.getService())
-				.bind("is_data_raw", arbitraryTransactionData.getDataType() == DataType.RAW_DATA).bind("data", arbitraryTransactionData.getData());
+				.bind("version", arbitraryTransactionData.getVersion()).bind("service", arbitraryTransactionData.getService().value)
+				.bind("nonce", arbitraryTransactionData.getNonce()).bind("size", arbitraryTransactionData.getSize())
+				.bind("is_data_raw", arbitraryTransactionData.getDataType() == DataType.RAW_DATA).bind("data", arbitraryTransactionData.getData())
+				.bind("metadata_hash", arbitraryTransactionData.getMetadataHash()).bind("name", arbitraryTransactionData.getName())
+				.bind("identifier", arbitraryTransactionData.getIdentifier()).bind("update_method", method)
+				.bind("secret", arbitraryTransactionData.getSecret()).bind("compression", compression);
 
 		try {
 			saveHelper.execute(this.repository);

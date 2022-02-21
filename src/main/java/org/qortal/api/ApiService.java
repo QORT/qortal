@@ -14,13 +14,14 @@ import java.security.SecureRandom;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 
+import org.checkerframework.checker.units.qual.A;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.rewrite.handler.RedirectPatternRule;
 import org.eclipse.jetty.rewrite.handler.RewriteHandler;
 import org.eclipse.jetty.server.CustomRequestLog;
+import org.eclipse.jetty.server.DetectorConnectionFactory;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;
-import org.eclipse.jetty.server.OptionalSslConnectionFactory;
 import org.eclipse.jetty.server.RequestLog;
 import org.eclipse.jetty.server.RequestLogWriter;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
@@ -43,6 +44,9 @@ import org.qortal.api.websocket.ActiveChatsWebSocket;
 import org.qortal.api.websocket.AdminStatusWebSocket;
 import org.qortal.api.websocket.BlocksWebSocket;
 import org.qortal.api.websocket.ChatMessagesWebSocket;
+import org.qortal.api.websocket.PresenceWebSocket;
+import org.qortal.api.websocket.TradeBotWebSocket;
+import org.qortal.api.websocket.TradeOffersWebSocket;
 import org.qortal.settings.Settings;
 
 public class ApiService {
@@ -51,6 +55,7 @@ public class ApiService {
 
 	private final ResourceConfig config;
 	private Server server;
+	private ApiKey apiKey;
 
 	private ApiService() {
 		this.config = new ResourceConfig();
@@ -70,6 +75,15 @@ public class ApiService {
 	public Iterable<Class<?>> getResources() {
 		return this.config.getClasses();
 	}
+
+	public void setApiKey(ApiKey apiKey) {
+		this.apiKey = apiKey;
+	}
+
+	public ApiKey getApiKey() {
+		return this.apiKey;
+	}
+
 
 	public void start() {
 		try {
@@ -113,8 +127,7 @@ public class ApiService {
 				SslConnectionFactory sslConnectionFactory = new SslConnectionFactory(sslContextFactory, HttpVersion.HTTP_1_1.asString());
 
 				ServerConnector portUnifiedConnector = new ServerConnector(this.server,
-						new OptionalSslConnectionFactory(sslConnectionFactory, HttpVersion.HTTP_1_1.asString()),
-						sslConnectionFactory,
+						new DetectorConnectionFactory(sslConnectionFactory),
 						httpConnectionFactory);
 				portUnifiedConnector.setHost(Settings.getInstance().getBindAddress());
 				portUnifiedConnector.setPort(Settings.getInstance().getApiPort());
@@ -197,6 +210,9 @@ public class ApiService {
 			context.addServlet(BlocksWebSocket.class, "/websockets/blocks");
 			context.addServlet(ActiveChatsWebSocket.class, "/websockets/chat/active/*");
 			context.addServlet(ChatMessagesWebSocket.class, "/websockets/chat/messages");
+			context.addServlet(TradeOffersWebSocket.class, "/websockets/crosschain/tradeoffers");
+			context.addServlet(TradeBotWebSocket.class, "/websockets/crosschain/tradebot");
+			context.addServlet(PresenceWebSocket.class, "/websockets/presence");
 
 			// Start server
 			this.server.start();
