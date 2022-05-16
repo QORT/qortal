@@ -1,13 +1,17 @@
 package org.qortal.repository.hsqldb;
 
+import static org.qortal.utils.Amounts.prettyAmount;
+
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.qortal.asset.Asset;
 import org.qortal.data.account.AccountBalanceData;
 import org.qortal.data.account.AccountData;
+import org.qortal.data.account.EligibleQoraHolderData;
 import org.qortal.data.account.MintingAccountData;
 import org.qortal.data.account.QortFromQoraData;
 import org.qortal.data.account.RewardShareData;
@@ -145,7 +149,7 @@ public class HSQLDBAccountRepository implements AccountRepository {
 	public void ensureAccount(AccountData accountData) throws DataException {
 		String sql = "INSERT IGNORE INTO Accounts (account, public_key) VALUES (?, ?)"; // MySQL syntax
 		try {
-			this.repository.checkedExecuteUpdateCount(sql, accountData.getAddress(), accountData.getPublicKey());
+			this.repository.executeCheckedUpdate(sql, accountData.getAddress(), accountData.getPublicKey());
 		} catch (SQLException e) {
 			throw new DataException("Unable to ensure minimal account in repository", e);
 		}
@@ -260,9 +264,23 @@ public class HSQLDBAccountRepository implements AccountRepository {
 			"ON DUPLICATE KEY UPDATE blocks_minted = blocks_minted + ?";
 
 		try {
-			return this.repository.checkedExecuteUpdateCount(sql, address, delta, delta);
+			return this.repository.executeCheckedUpdate(sql, address, delta, delta);
 		} catch (SQLException e) {
 			throw new DataException("Unable to modify account's minted block count in repository", e);
+		}
+	}
+
+	@Override
+	public void modifyMintedBlockCounts(List<String> addresses, int delta) throws DataException {
+		String sql = "INSERT INTO Accounts (account, blocks_minted) VALUES (?, ?) " +
+				"ON DUPLICATE KEY UPDATE blocks_minted = blocks_minted + ?";
+
+		List<Object[]> bindParamRows = addresses.stream().map(address -> new Object[] { address, delta, delta }).collect(Collectors.toList());
+
+		try {
+			this.repository.executeCheckedBatchUpdate(sql, bindParamRows);
+		} catch (SQLException e) {
+			throw new DataException("Unable to modify many account minted block counts in repository", e);
 		}
 	}
 
@@ -447,7 +465,7 @@ public class HSQLDBAccountRepository implements AccountRepository {
 			// Perform actual balance change
 			String sql = "UPDATE AccountBalances set balance = balance + ? WHERE account = ? AND asset_id = ?";
 			try {
-				this.repository.checkedExecuteUpdateCount(sql, deltaBalance, address, assetId);
+				this.repository.executeCheckedUpdate(sql, deltaBalance, address, assetId);
 			} catch (SQLException e) {
 				throw new DataException("Unable to reduce account balance in repository", e);
 			}
@@ -455,7 +473,7 @@ public class HSQLDBAccountRepository implements AccountRepository {
 			// We have to ensure parent row exists to satisfy foreign key constraint
 			try {
 				String sql = "INSERT IGNORE INTO Accounts (account) VALUES (?)"; // MySQL syntax
-				this.repository.checkedExecuteUpdateCount(sql, address);
+				this.repository.executeCheckedUpdate(sql, address);
 			} catch (SQLException e) {
 				throw new DataException("Unable to ensure minimal account in repository", e);
 			}
@@ -464,10 +482,92 @@ public class HSQLDBAccountRepository implements AccountRepository {
 			String sql = "INSERT INTO AccountBalances (account, asset_id, balance) VALUES (?, ?, ?) " +
 				"ON DUPLICATE KEY UPDATE balance = balance + ?";
 			try {
-				this.repository.checkedExecuteUpdateCount(sql, address, assetId, deltaBalance, deltaBalance);
+				this.repository.executeCheckedUpdate(sql, address, assetId, deltaBalance, deltaBalance);
 			} catch (SQLException e) {
 				throw new DataException("Unable to increase account balance in repository", e);
 			}
+		}
+	}
+
+	public void modifyAssetBalances(List<AccountBalanceData> accountBalanceDeltas) throws DataException {
+		// Nothing to do?
+		if (accountBalanceDeltas == null || accountBalanceDeltas.isEmpty())
+			return;
+
+		// Map balance changes into SQL bind params, filtering out no-op changes
+		List<Object[]> modifyBalanceParams = accountBalanceDeltas.stream()
+				.filter(accountBalance -> accountBalance.getBalance() != 0L)
+				.map(accountBalance -> new Object[] { accountBalance.getAddress(), accountBalance.getAssetId(), accountBalance.getBalance(), accountBalance.getBalance() })
+				.collect(Collectors.toList());
+
+		// Before we modify balances, ensure parent accounts exist
+		String ensureSql = "INSERT IGNORE INTO Accounts (account) VALUES (?)"; // MySQL syntax
+		try {
+			this.repository.executeCheckedBatchUpdate(ensureSql, modifyBalanceParams.stream().map(objects -> new Object[] { objects[0] }).collect(Collectors.toList()));
+		} catch (SQLException e) {
+			throw new DataException("Unable to ensure minimal accounts in repository", e);
+		}
+
+		// Perform actual balance changes
+		String sql = "INSERT INTO AccountBalances (account, asset_id, balance) VALUES (?, ?, ?) " +
+			"ON DUPLICATE KEY UPDATE balance = balance + ?";
+		try {
+			this.repository.executeCheckedBatchUpdate(sql, modifyBalanceParams);
+		} catch (SQLException e) {
+			throw new DataException("Unable to modify account balances in repository", e);
+		}
+	}
+
+
+	@Override
+	public void setAssetBalances(List<AccountBalanceData> accountBalances) throws DataException {
+		// Nothing to do?
+		if (accountBalances == null || accountBalances.isEmpty())
+			return;
+
+		/*
+		 * Split workload into zero and non-zero balances,
+		 * checking for negative balances as we progress.
+		 */
+
+		List<Object[]> zeroAccountBalanceParams = new ArrayList<>();
+		List<Object[]> nonZeroAccountBalanceParams = new ArrayList<>();
+
+		for (AccountBalanceData accountBalanceData : accountBalances) {
+			final long balance = accountBalanceData.getBalance();
+
+			if (balance < 0)
+				throw new DataException(String.format("Refusing to set negative balance %s [assetId %d] for %s",
+						prettyAmount(balance), accountBalanceData.getAssetId(), accountBalanceData.getAddress()));
+
+			if (balance == 0)
+				zeroAccountBalanceParams.add(new Object[] { accountBalanceData.getAddress(), accountBalanceData.getAssetId() });
+			else
+				nonZeroAccountBalanceParams.add(new Object[] { accountBalanceData.getAddress(), accountBalanceData.getAssetId(), balance, balance });
+		}
+
+		// Batch update (actually delete) of zero balances
+		try {
+			this.repository.deleteBatch("AccountBalances", "account = ? AND asset_id = ?", zeroAccountBalanceParams);
+		} catch (SQLException e) {
+			throw new DataException("Unable to delete account balances from repository", e);
+		}
+
+		// Before we set new balances, ensure parent accounts exist
+		String ensureSql = "INSERT IGNORE INTO Accounts (account) VALUES (?)"; // MySQL syntax
+		try {
+			this.repository.executeCheckedBatchUpdate(ensureSql, nonZeroAccountBalanceParams.stream().map(objects -> new Object[] { objects[0] }).collect(Collectors.toList()));
+		} catch (SQLException e) {
+			throw new DataException("Unable to ensure minimal accounts in repository", e);
+		}
+
+		// Now set all balances in one go
+		String setSql = "INSERT INTO AccountBalances (account, asset_id, balance) VALUES (?, ?, ?) " +
+				"ON DUPLICATE KEY UPDATE balance = ?";
+		try {
+			this.repository.executeCheckedBatchUpdate(setSql, nonZeroAccountBalanceParams);
+		} catch (SQLException e) {
+			throw new DataException("Unable to set account balances in repository", e);
 		}
 	}
 
@@ -699,7 +799,52 @@ public class HSQLDBAccountRepository implements AccountRepository {
 
 			return new RewardShareData(minterPublicKey, minter, recipient, rewardSharePublicKey, sharePercent);
 		} catch (SQLException e) {
-			throw new DataException("Unable to fetch reward-share info from repository", e);
+			throw new DataException("Unable to fetch indexed reward-share from repository", e);
+		}
+	}
+
+	@Override
+	public List<RewardShareData> getRewardSharesByIndexes(int[] indexes) throws DataException {
+		String sql = "SELECT minter_public_key, minter, recipient, share_percent, reward_share_public_key FROM RewardShares "
+				+ "ORDER BY reward_share_public_key ASC";
+
+		if (indexes == null)
+			return null;
+
+		List<RewardShareData> rewardShares = new ArrayList<>();
+		if (indexes.length == 0)
+			return rewardShares;
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql)) {
+			if (resultSet == null)
+				return null;
+
+			int rowNum = 1;
+			for (int i = 0; i < indexes.length; ++i) {
+				final int index = indexes[i];
+
+				while (rowNum < index + 1) { // +1 because in JDBC, first row is row 1
+					if (!resultSet.next())
+						// Index is out of bounds
+						return null;
+
+					++rowNum;
+				}
+
+				byte[] minterPublicKey = resultSet.getBytes(1);
+				String minter = resultSet.getString(2);
+				String recipient = resultSet.getString(3);
+				int sharePercent = resultSet.getInt(4);
+				byte[] rewardSharePublicKey = resultSet.getBytes(5);
+
+				RewardShareData rewardShareData = new RewardShareData(minterPublicKey, minter, recipient, rewardSharePublicKey, sharePercent);
+
+				rewardShares.add(rewardShareData);
+			}
+
+			return rewardShares;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch indexed reward-shares from repository", e);
 		}
 	}
 
@@ -760,6 +905,25 @@ public class HSQLDBAccountRepository implements AccountRepository {
 	}
 
 	@Override
+	public MintingAccountData getMintingAccount(byte[] mintingAccountKey) throws DataException {
+		try (ResultSet resultSet = this.repository.checkedExecute("SELECT minter_private_key, minter_public_key " +
+				"FROM MintingAccounts WHERE minter_private_key = ? OR minter_public_key = ?",
+				mintingAccountKey, mintingAccountKey)) {
+
+			if (resultSet == null)
+				return null;
+
+				byte[] minterPrivateKey = resultSet.getBytes(1);
+				byte[] minterPublicKey = resultSet.getBytes(2);
+
+				return new MintingAccountData(minterPrivateKey, minterPublicKey);
+
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch minting accounts from repository", e);
+		}
+	}
+
+	@Override
 	public void save(MintingAccountData mintingAccountData) throws DataException {
 		HSQLDBSaver saveHelper = new HSQLDBSaver("MintingAccounts");
 
@@ -774,9 +938,9 @@ public class HSQLDBAccountRepository implements AccountRepository {
 	}
 
 	@Override
-	public int delete(byte[] minterPrivateKey) throws DataException {
+	public int delete(byte[] minterKey) throws DataException {
 		try {
-			return this.repository.delete("MintingAccounts", "minter_private_key = ?", minterPrivateKey);
+			return this.repository.delete("MintingAccounts", "minter_private_key = ? OR minter_public_key = ?", minterKey, minterKey);
 		} catch (SQLException e) {
 			throw new DataException("Unable to delete minting account from repository", e);
 		}
@@ -785,35 +949,49 @@ public class HSQLDBAccountRepository implements AccountRepository {
 	// Managing QORT from legacy QORA
 
 	@Override
-	public List<AccountBalanceData> getEligibleLegacyQoraHolders(Integer blockHeight) throws DataException {
+	public List<EligibleQoraHolderData> getEligibleLegacyQoraHolders(Integer blockHeight) throws DataException {
 		StringBuilder sql = new StringBuilder(1024);
-		sql.append("SELECT account, balance from AccountBalances ");
+		List<Object> bindParams = new ArrayList<>();
+
+		sql.append("SELECT account, Qora.balance, QortFromQora.balance, final_qort_from_qora, final_block_height ");
+		sql.append("FROM AccountBalances AS Qora ");
 		sql.append("LEFT OUTER JOIN AccountQortFromQoraInfo USING (account) ");
-		sql.append("WHERE asset_id = ");
+		sql.append("LEFT OUTER JOIN AccountBalances AS QortFromQora ON QortFromQora.account = Qora.account AND QortFromQora.asset_id = ");
+		sql.append(Asset.QORT_FROM_QORA); // int is safe to use literally
+		sql.append(" WHERE Qora.asset_id = ");
 		sql.append(Asset.LEGACY_QORA); // int is safe to use literally
 		sql.append(" AND (final_block_height IS NULL");
 
 		if (blockHeight != null) {
-			sql.append(" OR final_block_height >= ");
-			sql.append(blockHeight);
+			sql.append(" OR final_block_height >= ?");
+			bindParams.add(blockHeight);
 		}
 
 		sql.append(")");
 
-		List<AccountBalanceData> accountBalances = new ArrayList<>();
+		List<EligibleQoraHolderData> eligibleLegacyQoraHolders = new ArrayList<>();
 
-		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString())) {
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), bindParams.toArray())) {
 			if (resultSet == null)
-				return accountBalances;
+				return eligibleLegacyQoraHolders;
 
 			do {
 				String address = resultSet.getString(1);
-				long balance = resultSet.getLong(2);
+				long qoraBalance = resultSet.getLong(2);
+				long qortFromQoraBalance = resultSet.getLong(3);
 
-				accountBalances.add(new AccountBalanceData(address, Asset.LEGACY_QORA, balance));
+				Long finalQortFromQora = resultSet.getLong(4);
+				if (finalQortFromQora == 0 && resultSet.wasNull())
+					finalQortFromQora = null;
+
+				Integer finalBlockHeight = resultSet.getInt(5);
+				if (finalBlockHeight == 0 && resultSet.wasNull())
+					finalBlockHeight = null;
+
+				eligibleLegacyQoraHolders.add(new EligibleQoraHolderData(address, qoraBalance, qortFromQoraBalance, finalQortFromQora, finalBlockHeight));
 			} while (resultSet.next());
 
-			return accountBalances;
+			return eligibleLegacyQoraHolders;
 		} catch (SQLException e) {
 			throw new DataException("Unable to fetch eligible legacy QORA holders from repository", e);
 		}

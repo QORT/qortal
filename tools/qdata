@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+
+# Qortal defaults
+host="localhost"
+port=12393
+
+if [ -z "$*" ]; then
+	echo "Usage:"
+	echo
+	echo "Host/update data:"
+	echo "qdata POST [service] [name] PATH [dirpath] <identifier>"
+	echo "qdata POST [service] [name] STRING [data-string] <identifier>"
+	echo
+	echo "Fetch data:"
+	echo "qdata GET [service] [name] <identifier-or-default> <filepath-or-default> <rebuild>"
+	echo
+	echo "Notes:"
+	echo "- When requesting a resource, please use 'default' to indicate a file with no identifier."
+	echo "- The same applies when specifying the relative path to a file within the data structure; use 'default'"
+	echo "  to indicate a single file resource."
+	echo
+	exit
+fi
+
+script_dir=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+if [ -f "apikey.txt" ]; then
+  apikey=$(cat "apikey.txt")
+elif [ -f "${script_dir}/../apikey.txt" ]; then
+  apikey=$(cat "${script_dir}/../apikey.txt")
+elif [ -f "${HOME}/qortal/apikey.txt" ]; then
+  apikey=$(cat "${HOME}/qortal/apikey.txt")
+fi
+
+method=$1
+service=$2
+name=$3
+
+if [ -z "${method}" ]; then
+  echo "Error: missing method"; exit
+fi
+if [ -z "${service}" ]; then
+  echo "Error: missing service"; exit
+fi
+if [ -z "${name}" ]; then
+  echo "Error: missing name"; exit
+fi
+
+
+if [[ "${method}" == "POST" ]]; then
+  type=$4
+  data=$5
+  identifier=$6
+
+  if [ -z "${data}" ]; then
+    if [[ "${type}" == "PATH" ]]; then
+      echo "Error: missing directory"; exit
+    elif [[ "${type}" == "STRING" ]]; then
+      echo "Error: missing data string"; exit
+    else
+      echo "Error: unrecognized type"; exit
+    fi
+  fi
+  if [ -z "${QORTAL_PRIVKEY}" ]; then
+    echo "Error: missing private key. Set it by running: export QORTAL_PRIVKEY=privkeyhere"; exit
+  fi
+
+  if [ -z "${identifier}" ]; then
+    identifier="default"
+  fi
+
+  # Create type component in URL
+  if [[ "${type}" == "PATH" ]]; then
+      type_component=""
+  elif [[ "${type}" == "STRING" ]]; then
+      type_component="/string"
+  fi
+
+  echo "Creating transaction - this can take a while..."
+  tx_data=$(curl --silent --insecure -X ${method} "http://${host}:${port}/arbitrary/${service}/${name}/${identifier}${type_component}" -H "X-API-KEY: ${apikey}" -d "${data}")
+
+  if [[ "${tx_data}" == *"error"* || "${tx_data}" == *"ERROR"* ]]; then
+    echo "${tx_data}"; exit
+  elif [ -z "${tx_data}" ]; then
+    echo "Error: no transaction data returned"; exit
+  fi
+
+  echo "Computing nonce..."
+  computed_tx_data=$(curl --silent --insecure -X POST "http://${host}:${port}/arbitrary/compute" -H "Content-Type: application/json" -H "X-API-KEY: ${apikey}" -d "${tx_data}")
+  if [[ "${computed_tx_data}" == *"error"* || "${computed_tx_data}" == *"ERROR"* ]]; then
+    echo "${computed_tx_data}"; exit
+  fi
+
+  echo "Signing..."
+  signed_tx_data=$(curl --silent --insecure -X POST "http://${host}:${port}/transactions/sign" -H  "Content-Type: application/json" -d "{\"privateKey\":\"${QORTAL_PRIVKEY}\",\"transactionBytes\":\"${computed_tx_data}\"}")
+  if [[ "${signed_tx_data}" == *"error"* || "${signed_tx_data}" == *"ERROR"* ]]; then
+    echo "${signed_tx_data}"; exit
+  fi
+
+  echo "Broadcasting..."
+  success=$(curl --silent --insecure -X POST "http://${host}:${port}/transactions/process" -H  "Content-Type: text/plain" -d "${signed_tx_data}")
+  if [[ "${success}" == "true" ]]; then
+    echo "Transaction broadcast successfully"
+  else
+    echo "Error when broadcasting transaction. Please try again."
+    echo "Response: ${success}"
+  fi
+
+elif [[ "${method}" == "GET" ]]; then
+  identifier=$4
+  filepath=$5
+  rebuild=$6
+
+  if [ -z "${rebuild}" ]; then
+    rebuild="false"
+  fi
+
+  # Handle default
+  if [[ "${filepath}" == "default" ]]; then
+    filepath=""
+  fi
+
+  # We use a different API depending on whether or not an identifier is supplied
+  if [ -n "${identifier}" ]; then
+    response=$(curl --silent --insecure -X GET "http://${host}:${port}/arbitrary/${service}/${name}/${identifier}?rebuild=${rebuild}&filepath=${filepath}" -H "X-API-KEY: ${apikey}")
+  else
+    response=$(curl --silent --insecure -X GET "http://${host}:${port}/arbitrary/${service}/${name}?rebuild=${rebuild}&filepath=${filepath}" -H "X-API-KEY: ${apikey}")
+  fi
+
+  if [ -z "${response}" ]; then
+    echo "Empty response from ${host}:${port}"
+  fi
+  if [[ "${response}" == *"error"* || "${response}" == *"ERROR"* ]]; then
+    echo "${response}"; exit
+  fi
+
+  echo "${response}"
+
+fi

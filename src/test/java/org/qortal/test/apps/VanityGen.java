@@ -10,7 +10,6 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.jsse.provider.BouncyCastleJsseProvider;
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.crypto.Crypto;
-import org.qortal.utils.BIP39;
 import org.qortal.utils.Base58;
 
 import com.google.common.primitives.Bytes;
@@ -44,15 +43,13 @@ public class VanityGen {
 				byte checksum = (byte) (hash[0] & 0xf0);
 				byte[] entropy132 = Bytes.concat(entropy, new byte[] { checksum });
 
-				String mnemonic = BIP39.encode(entropy132, "en");
-
 				PrivateKeyAccount account = new PrivateKeyAccount(null, hash);
 
 				if (!account.getAddress().startsWith(prefix))
 					continue;
 
-				System.out.println(String.format("Address: %s, public key: %s, private key: %s, mnemonic: %s",
-						account.getAddress(), Base58.encode(account.getPublicKey()), Base58.encode(hash), mnemonic));
+				System.out.println(String.format("Address: %s, public key: %s, private key: %s",
+						account.getAddress(), Base58.encode(account.getPublicKey()), Base58.encode(hash)));
 				System.out.flush();
 			}
 		}

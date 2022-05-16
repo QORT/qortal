@@ -9,12 +9,14 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.qortal.api.resource.TransactionsResource.ConfirmationStatus;
+import org.qortal.arbitrary.misc.Service;
 import org.qortal.data.PaymentData;
 import org.qortal.data.group.GroupApprovalData;
 import org.qortal.data.transaction.BaseTransactionData;
@@ -28,6 +30,7 @@ import org.qortal.repository.hsqldb.HSQLDBSaver;
 import org.qortal.transaction.Transaction.ApprovalStatus;
 import org.qortal.transaction.Transaction.TransactionType;
 import org.qortal.utils.Base58;
+import org.qortal.utils.Unicode;
 
 public class HSQLDBTransactionRepository implements TransactionRepository {
 
@@ -385,8 +388,8 @@ public class HSQLDBTransactionRepository implements TransactionRepository {
 
 	@Override
 	public List<byte[]> getSignaturesMatchingCriteria(Integer startBlock, Integer blockLimit, Integer txGroupId,
-			List<TransactionType> txTypes, Integer service, String address,
-			ConfirmationStatus confirmationStatus, Integer limit, Integer offset, Boolean reverse) throws DataException {
+													  List<TransactionType> txTypes, Service service, String name, String address,
+													  ConfirmationStatus confirmationStatus, Integer limit, Integer offset, Boolean reverse) throws DataException {
 		List<byte[]> signatures = new ArrayList<>();
 
 		boolean hasAddress = address != null && !address.isEmpty();
@@ -411,8 +414,8 @@ public class HSQLDBTransactionRepository implements TransactionRepository {
 			signatureColumn = "TransactionParticipants.signature";
 		}
 
-		if (service != null) {
-			// This is for ARBITRARY transactions
+		if (service != null || name != null) {
+			// These are for ARBITRARY transactions
 			tables.append(" LEFT OUTER JOIN ArbitraryTransactions ON ArbitraryTransactions.signature = Transactions.signature");
 		}
 
@@ -465,7 +468,12 @@ public class HSQLDBTransactionRepository implements TransactionRepository {
 
 		if (service != null) {
 			whereClauses.add("ArbitraryTransactions.service = ?");
-			bindParams.add(service);
+			bindParams.add(service.value);
+		}
+
+		if (name != null) {
+			whereClauses.add("lower(ArbitraryTransactions.name) = ?");
+			bindParams.add(name.toLowerCase());
 		}
 
 		if (hasAddress) {
@@ -586,6 +594,107 @@ public class HSQLDBTransactionRepository implements TransactionRepository {
 	}
 
 	@Override
+	public List<byte[]> getSignaturesMatchingCriteria(TransactionType txType, byte[] publicKey,
+			Integer minBlockHeight, Integer maxBlockHeight) throws DataException {
+		List<byte[]> signatures = new ArrayList<>();
+
+		StringBuilder sql = new StringBuilder(1024);
+		sql.append("SELECT signature FROM Transactions ");
+
+		List<String> whereClauses = new ArrayList<>();
+		List<Object> bindParams = new ArrayList<>();
+
+		if (txType != null) {
+			whereClauses.add("type = ?");
+			bindParams.add(txType.value);
+		}
+
+		if (publicKey != null) {
+			whereClauses.add("creator = ?");
+			bindParams.add(publicKey);
+		}
+
+		if (minBlockHeight != null) {
+			whereClauses.add("Transactions.block_height >= ?");
+			bindParams.add(minBlockHeight);
+		}
+
+		if (maxBlockHeight != null) {
+			whereClauses.add("Transactions.block_height <= ?");
+			bindParams.add(maxBlockHeight);
+		}
+
+		if (!whereClauses.isEmpty()) {
+			sql.append(" WHERE ");
+
+			final int whereClausesSize = whereClauses.size();
+			for (int wci = 0; wci < whereClausesSize; ++wci) {
+				if (wci != 0)
+					sql.append(" AND ");
+
+				sql.append(whereClauses.get(wci));
+			}
+		}
+
+		sql.append(" ORDER BY Transactions.created_when");
+
+		LOGGER.trace(() -> String.format("Transaction search SQL: %s", sql));
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), bindParams.toArray())) {
+			if (resultSet == null)
+				return signatures;
+
+			do {
+				byte[] signature = resultSet.getBytes(1);
+
+				signatures.add(signature);
+			} while (resultSet.next());
+
+			return signatures;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch matching transaction signatures from repository", e);
+		}
+	}
+
+
+	public List<byte[]> getSignaturesMatchingCustomCriteria(TransactionType txType, List<String> whereClauses,
+															List<Object> bindParams) throws DataException {
+		List<byte[]> signatures = new ArrayList<>();
+
+		StringBuilder sql = new StringBuilder(1024);
+		sql.append(String.format("SELECT signature FROM %sTransactions", txType.className));
+
+		if (!whereClauses.isEmpty()) {
+			sql.append(" WHERE ");
+
+			final int whereClausesSize = whereClauses.size();
+			for (int wci = 0; wci < whereClausesSize; ++wci) {
+				if (wci != 0)
+					sql.append(" AND ");
+
+				sql.append(whereClauses.get(wci));
+			}
+		}
+
+		LOGGER.trace(() -> String.format("Transaction search SQL: %s", sql));
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), bindParams.toArray())) {
+			if (resultSet == null)
+				return signatures;
+
+			do {
+				byte[] signature = resultSet.getBytes(1);
+
+				signatures.add(signature);
+			} while (resultSet.next());
+
+			return signatures;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch matching transaction signatures from repository", e);
+		}
+	}
+
+	@Override
 	public byte[] getLatestAutoUpdateTransaction(TransactionType txType, int txGroupId, Integer service) throws DataException {
 		StringBuilder sql = new StringBuilder(1024);
 		sql.append("SELECT Transactions.signature FROM Transactions");
@@ -627,6 +736,88 @@ public class HSQLDBTransactionRepository implements TransactionRepository {
 			return resultSet.getBytes(1);
 		} catch (SQLException e) {
 			throw new DataException("Unable to fetch latest auto-update transaction signature from repository", e);
+		}
+	}
+
+	@Override
+	public List<TransactionData> getTransactionsInvolvingName(String name, ConfirmationStatus confirmationStatus) throws DataException {
+		TransactionType[] transactionTypes = new TransactionType[] {
+				REGISTER_NAME, UPDATE_NAME, BUY_NAME, SELL_NAME
+		}; // TODO: CancelSellNameTransaction?
+
+		String reducedName = Unicode.sanitize(name);
+
+		StringBuilder sql = new StringBuilder(1024);
+		List<Object> bindParams = new ArrayList<>();
+		sql.append("SELECT Transactions.signature FROM Transactions");
+
+		for (int ti = 0; ti < transactionTypes.length; ++ti) {
+			sql.append(" LEFT OUTER JOIN ");
+			sql.append(transactionTypes[ti].className);
+			sql.append("Transactions USING (signature)");
+		}
+
+		sql.append(" WHERE Transactions.type IN (");
+		for (int ti = 0; ti < transactionTypes.length; ++ti) {
+			if (ti != 0)
+				sql.append(", ");
+
+			sql.append(transactionTypes[ti].value);
+		}
+		sql.append(")");
+
+		// Confirmation status
+		switch (confirmationStatus) {
+			case BOTH:
+				break;
+
+			case CONFIRMED:
+				sql.append(" AND Transactions.block_height IS NOT NULL");
+				break;
+
+			case UNCONFIRMED:
+				sql.append(" AND Transactions.block_height IS NULL");
+				break;
+		}
+
+		sql.append(" AND (RegisterNameTransactions.name = ?");
+		bindParams.add(name);
+		sql.append(" OR RegisterNameTransactions.reduced_name = ?");
+		bindParams.add(reducedName);
+		sql.append(" OR UpdateNameTransactions.name = ?");
+		bindParams.add(name);
+		sql.append(" OR (UpdateNameTransactions.reduced_new_name != '' AND UpdateNameTransactions.reduced_new_name = ?)");
+		bindParams.add(reducedName);
+		sql.append(" OR UpdateNameTransactions.new_name = ?");
+		bindParams.add(name);
+		sql.append(" OR SellNameTransactions.name = ?");
+		bindParams.add(name);
+		sql.append(" OR BuyNameTransactions.name = ?");
+		bindParams.add(name);
+
+		sql.append(") GROUP BY Transactions.signature, Transactions.created_when ORDER BY Transactions.created_when");
+
+		List<TransactionData> transactions = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), bindParams.toArray())) {
+			if (resultSet == null)
+				return transactions;
+
+			do {
+				byte[] signature = resultSet.getBytes(1);
+
+				TransactionData transactionData = this.fromSignature(signature);
+
+				if (transactionData == null)
+					// Something inconsistent with the repository
+					throw new DataException("Unable to fetch name-related transaction from repository?");
+
+				transactions.add(transactionData);
+			} while (resultSet.next());
+
+			return transactions;
+		} catch (SQLException | DataException e) {
+			throw new DataException("Unable to fetch name-related transactions from repository", e);
 		}
 	}
 
@@ -1035,6 +1226,108 @@ public class HSQLDBTransactionRepository implements TransactionRepository {
 			sql.append(" DESC");
 
 		HSQLDBRepository.limitOffsetSql(sql, limit, offset);
+
+		List<TransactionData> transactions = new ArrayList<>();
+
+		// Find transactions with no corresponding row in BlockTransactions
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString())) {
+			if (resultSet == null)
+				return transactions;
+
+			do {
+				byte[] signature = resultSet.getBytes(1);
+
+				TransactionData transactionData = this.fromSignature(signature);
+
+				if (transactionData == null)
+					// Something inconsistent with the repository
+					throw new DataException(String.format("Unable to fetch unconfirmed transaction %s from repository?", Base58.encode(signature)));
+
+				transactions.add(transactionData);
+			} while (resultSet.next());
+
+			return transactions;
+		} catch (SQLException | DataException e) {
+			throw new DataException("Unable to fetch unconfirmed transactions from repository", e);
+		}
+	}
+
+	@Override
+	public List<TransactionData> getUnconfirmedTransactions(TransactionType txType, byte[] creatorPublicKey) throws DataException {
+		if (txType == null && creatorPublicKey == null)
+			throw new IllegalArgumentException("At least one of txType or creatorPublicKey must be non-null");
+
+		StringBuilder sql = new StringBuilder(1024);
+		sql.append("SELECT signature FROM UnconfirmedTransactions ");
+		sql.append("JOIN Transactions USING (signature) ");
+		sql.append("WHERE ");
+
+		List<String> whereClauses = new ArrayList<>();
+		List<Object> bindParams = new ArrayList<>();
+
+		if (txType != null) {
+			whereClauses.add("type = ?");
+			bindParams.add(Integer.valueOf(txType.value));
+		}
+
+		if (creatorPublicKey != null) {
+			whereClauses.add("creator = ?");
+			bindParams.add(creatorPublicKey);
+		}
+
+		final int whereClausesSize = whereClauses.size();
+		for (int wci = 0; wci < whereClausesSize; ++wci) {
+			if (wci != 0)
+				sql.append(" AND ");
+
+			sql.append(whereClauses.get(wci));
+		}
+
+		sql.append("ORDER BY created_when, signature");
+
+		List<TransactionData> transactions = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), bindParams.toArray())) {
+			if (resultSet == null)
+				return transactions;
+
+			do {
+				byte[] signature = resultSet.getBytes(1);
+
+				TransactionData transactionData = this.fromSignature(signature);
+
+				if (transactionData == null)
+					// Something inconsistent with the repository
+					throw new DataException(String.format("Unable to fetch unconfirmed transaction %s from repository?", Base58.encode(signature)));
+
+				transactions.add(transactionData);
+			} while (resultSet.next());
+
+			return transactions;
+		} catch (SQLException | DataException e) {
+			throw new DataException("Unable to fetch unconfirmed transactions from repository", e);
+		}
+	}
+
+	@Override
+	public List<TransactionData> getUnconfirmedTransactions(EnumSet<TransactionType> excludedTxTypes) throws DataException {
+		StringBuilder sql = new StringBuilder(1024);
+		sql.append("SELECT signature FROM UnconfirmedTransactions ");
+		sql.append("JOIN Transactions USING (signature) ");
+		sql.append("WHERE type NOT IN (");
+
+		boolean firstTxType = true;
+		for (TransactionType txType : excludedTxTypes) {
+			if (firstTxType)
+				firstTxType = false;
+			else
+				sql.append(", ");
+
+			sql.append(txType.value);
+		}
+
+		sql.append(")");
+		sql.append("ORDER BY created_when, signature");
 
 		List<TransactionData> transactions = new ArrayList<>();
 

@@ -63,6 +63,11 @@ public class CancelAssetOrderTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Mark Order as completed so no more trades can happen
 		OrderData orderData = this.repository.getAssetRepository().fromOrderId(this.cancelOrderTransactionData.getOrderId());

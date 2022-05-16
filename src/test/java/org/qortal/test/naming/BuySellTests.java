@@ -20,7 +20,9 @@ import org.qortal.test.common.BlockUtils;
 import org.qortal.test.common.Common;
 import org.qortal.test.common.TransactionUtils;
 import org.qortal.test.common.transaction.TestTransaction;
+import org.qortal.transaction.RegisterNameTransaction;
 import org.qortal.utils.Amounts;
+import org.qortal.utils.NTP;
 
 public class BuySellTests extends Common {
 
@@ -62,6 +64,7 @@ public class BuySellTests extends Common {
 	public void testRegisterName() throws DataException {
 		// Register-name
 		RegisterNameTransactionData transactionData = new RegisterNameTransactionData(TestTransaction.generateBase(alice), name, "{}");
+		transactionData.setFee(new RegisterNameTransaction(null, null).getUnitFee(transactionData.getTimestamp()));;
 		TransactionUtils.signAndMint(repository, transactionData, alice);
 
 		String name = transactionData.getName();

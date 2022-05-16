@@ -6,6 +6,7 @@ import java.util.List;
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.block.BlockChain;
+import org.qortal.controller.repository.NamesDatabaseIntegrityCheck;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.transaction.RegisterNameTransactionData;
 import org.qortal.data.transaction.TransactionData;
@@ -34,6 +35,15 @@ public class RegisterNameTransaction extends Transaction {
 	@Override
 	public List<String> getRecipientAddresses() throws DataException {
 		return Collections.emptyList();
+	}
+
+	@Override
+	public long getUnitFee(Long timestamp) {
+		// Use a higher unit fee after the fee increase timestamp
+		if (timestamp > BlockChain.getInstance().getNameRegistrationUnitFeeTimestamp()) {
+			return BlockChain.getInstance().getNameRegistrationUnitFee();
+		}
+		return BlockChain.getInstance().getUnitFee();
 	}
 
 	// Navigation
@@ -86,6 +96,17 @@ public class RegisterNameTransaction extends Transaction {
 			return ValidationResult.MULTIPLE_NAMES_FORBIDDEN;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		RegisterNameTransactionData registerNameTransactionData = (RegisterNameTransactionData) transactionData;
+
+		// Rebuild this name in the Names table from the transaction history
+		// This is necessary because in some rare cases names can be missing from the Names table after registration
+		// but we have been unable to reproduce the issue and track down the root cause
+		NamesDatabaseIntegrityCheck namesDatabaseIntegrityCheck = new NamesDatabaseIntegrityCheck();
+		namesDatabaseIntegrityCheck.rebuildName(registerNameTransactionData.getName(), this.repository);
 	}
 
 	@Override

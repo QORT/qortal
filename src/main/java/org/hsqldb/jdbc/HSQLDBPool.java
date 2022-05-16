@@ -21,18 +21,28 @@ public class HSQLDBPool extends JDBCPool {
 	public Connection tryConnection() throws SQLException {
 		for (int i = 0; i < states.length(); i++) {
 			if (states.compareAndSet(i, RefState.available, RefState.allocated)) {
-				return connections[i].getConnection();
+				JDBCPooledConnection pooledConnection = connections[i];
+
+				if (pooledConnection == null)
+					// Probably shutdown situation
+					return null;
+
+				return pooledConnection.getConnection();
 			}
 
 			if (states.compareAndSet(i, RefState.empty, RefState.allocated)) {
 				try {
-					JDBCPooledConnection connection = (JDBCPooledConnection) source.getPooledConnection();
+					JDBCPooledConnection pooledConnection = (JDBCPooledConnection) source.getPooledConnection();
 
-					connection.addConnectionEventListener(this);
-					connection.addStatementEventListener(this);
-					connections[i] = connection;
+					if (pooledConnection == null)
+						// Probably shutdown situation
+						return null;
 
-					return connections[i].getConnection();
+					pooledConnection.addConnectionEventListener(this);
+					pooledConnection.addStatementEventListener(this);
+					connections[i] = pooledConnection;
+
+					return pooledConnection.getConnection();
 				} catch (SQLException e) {
 					states.set(i, RefState.empty);
 				}

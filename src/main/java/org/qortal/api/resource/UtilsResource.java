@@ -33,7 +33,6 @@ import org.qortal.transaction.Transaction.TransactionType;
 import org.qortal.transform.Transformer;
 import org.qortal.transform.transaction.TransactionTransformer;
 import org.qortal.transform.transaction.TransactionTransformer.Transformation;
-import org.qortal.utils.BIP39;
 import org.qortal.utils.Base58;
 
 import com.google.common.hash.HashCode;
@@ -193,123 +192,6 @@ public class UtilsResource {
 		byte[] random = new byte[length];
 		new SecureRandom().nextBytes(random);
 		return Base58.encode(random);
-	}
-
-	@GET
-	@Path("/mnemonic")
-	@Operation(
-		summary = "Generate 12-word BIP39 mnemonic",
-		description = "Optionally pass 16-byte, base58-encoded entropy or entropy will be internally generated.<br>"
-				+ "Example entropy input: YcVfxkQb6JRzqk5kF2tNLv",
-		responses = {
-			@ApiResponse(
-				description = "mnemonic",
-				content = @Content(
-					mediaType = MediaType.TEXT_PLAIN,
-					schema = @Schema(
-						type = "string"
-					)
-				)
-			)
-		}
-	)
-	@ApiErrors({ApiError.NON_PRODUCTION, ApiError.INVALID_DATA})
-	public String getMnemonic(@QueryParam("entropy") String suppliedEntropy) {
-		if (Settings.getInstance().isApiRestricted())
-			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.NON_PRODUCTION);
-
-		/*
-		 * BIP39 word lists have 2048 entries so can be represented by 11 bits.
-		 * UUID (128bits) and another 4 bits gives 132 bits.
-		 * 132 bits, divided by 11, gives 12 words.
-		 */
-		byte[] entropy;
-		if (suppliedEntropy != null) {
-			// Use caller-supplied entropy input
-			try {
-				entropy = Base58.decode(suppliedEntropy);
-			} catch (NumberFormatException e) {
-				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
-			}
-
-			// Must be 16-bytes
-			if (entropy.length != 16)
-				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
-		} else {
-			// Generate entropy internally
-			UUID uuid = UUID.randomUUID();
-
-			byte[] uuidMSB = Longs.toByteArray(uuid.getMostSignificantBits());
-			byte[] uuidLSB = Longs.toByteArray(uuid.getLeastSignificantBits());
-			entropy = Bytes.concat(uuidMSB, uuidLSB);
-		}
-
-		// Use SHA256 to generate more bits
-		byte[] hash = Crypto.digest(entropy);
-
-		// Append first 4 bits from hash to end. (Actually 8 bits but we only use 4).
-		byte checksum = (byte) (hash[0] & 0xf0);
-		entropy = Bytes.concat(entropy, new byte[] {
-			checksum
-		});
-
-		return BIP39.encode(entropy, "en");
-	}
-
-	@POST
-	@Path("/mnemonic")
-	@Operation(
-		summary = "Calculate binary entropy from 12-word BIP39 mnemonic",
-		description = "Returns the base58-encoded binary form, or \"false\" if mnemonic is invalid.",
-		requestBody = @RequestBody(
-			required = true,
-			content = @Content(
-				mediaType = MediaType.TEXT_PLAIN,
-				schema = @Schema(
-					type = "string"
-				)
-			)
-		),
-		responses = {
-			@ApiResponse(
-				description = "entropy in base58",
-				content = @Content(
-					mediaType = MediaType.TEXT_PLAIN,
-					schema = @Schema(
-						type = "string"
-					)
-				)
-			)
-		}
-	)
-	@ApiErrors({ApiError.NON_PRODUCTION})
-	public String fromMnemonic(String mnemonic) {
-		if (Settings.getInstance().isApiRestricted())
-			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.NON_PRODUCTION);
-
-		if (mnemonic.isEmpty())
-			return "false";
-
-		// Strip leading/trailing whitespace if any
-		mnemonic = mnemonic.trim();
-
-		String[] phraseWords = mnemonic.split(" ");
-		if (phraseWords.length != 12)
-			return "false";
-
-		// Convert BIP39 mnemonic to binary
-		byte[] binary = BIP39.decode(phraseWords, "en");
-		if (binary == null)
-			return "false";
-
-		byte[] entropy = Arrays.copyOf(binary, 16); // 132 bits is 16.5 bytes, but we're discarding checksum nybble
-
-		byte checksumNybble = (byte) (binary[16] & 0xf0);
-		byte[] checksum = Crypto.digest(entropy);
-		if (checksumNybble != (byte) (checksum[0] & 0xf0))
-			return "false";
-
-		return Base58.encode(entropy);
 	}
 
 	@POST

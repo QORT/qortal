@@ -22,6 +22,9 @@ public class CrossChainBitcoinRefundRequest {
 	@Schema(description = "Bitcoin miner fee", example = "0.00001000")
 	public BigDecimal bitcoinMinerFee;
 
+	@Schema(description = "Bitcoin HASH160(public key) for receiving funds, or omit to derive from private key", example = "u17kBVKkKSp12oUzaxFwNnq1JZf")
+	public byte[] receivingAccountInfo;
+
 	public CrossChainBitcoinRefundRequest() {
 	}
 

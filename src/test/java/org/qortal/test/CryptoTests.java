@@ -3,15 +3,28 @@ package org.qortal.test;
 import org.junit.Test;
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.block.BlockChain;
+import org.qortal.crypto.AES;
 import org.qortal.crypto.BouncyCastle25519;
 import org.qortal.crypto.Crypto;
 import org.qortal.test.common.Common;
+import org.qortal.utils.Base58;
 
 import static org.junit.Assert.*;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.util.Arrays;
+import java.util.Random;
 
-import org.bitcoinj.core.Base58;
 import org.bouncycastle.crypto.agreement.X25519Agreement;
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters;
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters;
@@ -19,6 +32,11 @@ import org.bouncycastle.crypto.params.X25519PrivateKeyParameters;
 import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 
 import com.google.common.hash.HashCode;
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.SecretKey;
 
 public class CryptoTests extends Common {
 
@@ -38,6 +56,37 @@ public class CryptoTests extends Common {
 		byte[] expected = HashCode.fromString("1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a").asBytes();
 
 		assertArrayEquals(expected, digest);
+	}
+
+	@Test
+	public void testFileDigest() throws IOException {
+		byte[] input = HashCode.fromString("00").asBytes();
+
+		Path tempPath = Files.createTempFile("", ".tmp");
+		Files.write(tempPath, input, StandardOpenOption.CREATE);
+
+		byte[] digest = Crypto.digest(tempPath.toFile());
+		byte[] expected = HashCode.fromString("6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d").asBytes();
+
+		assertArrayEquals(expected, digest);
+
+		Files.delete(tempPath);
+	}
+
+	@Test
+	public void testFileDigestWithRandomData() throws IOException {
+		byte[] input = new byte[128];
+		new Random().nextBytes(input);
+
+		Path tempPath = Files.createTempFile("", ".tmp");
+		Files.write(tempPath, input, StandardOpenOption.CREATE);
+
+		byte[] fileDigest = Crypto.digest(tempPath.toFile());
+		byte[] memoryDigest = Crypto.digest(input);
+
+		assertArrayEquals(fileDigest, memoryDigest);
+
+		Files.delete(tempPath);
 	}
 
 	@Test
@@ -253,6 +302,70 @@ public class CryptoTests extends Common {
 		byte[] proxyPrivateKey = mintingAccount.getRewardSharePrivateKey(theirPublicKey);
 
 		assertEquals(expectedProxyPrivateKey, Base58.encode(proxyPrivateKey));
+	}
+
+
+	@Test
+	public void testAESFileEncryption() throws NoSuchAlgorithmException, IOException, IllegalBlockSizeException,
+			InvalidKeyException, BadPaddingException, InvalidAlgorithmParameterException, NoSuchPaddingException {
+
+		// Create temporary directory and file paths
+		java.nio.file.Path tempDir = Files.createTempDirectory("qortal-tests");
+		String inputFilePath = tempDir.toString() + File.separator + "inputFile";
+		String outputFilePath = tempDir.toString() + File.separator + "outputFile";
+		String decryptedFilePath = tempDir.toString() + File.separator + "decryptedFile";
+		String reencryptedFilePath = tempDir.toString() + File.separator + "reencryptedFile";
+
+		// Generate some dummy data
+		byte[] randomBytes = new byte[1024];
+		new Random().nextBytes(randomBytes);
+
+		// Write it to the input file
+		FileOutputStream outputStream = new FileOutputStream(inputFilePath);
+		outputStream.write(randomBytes);
+
+		// Make sure only the input file exists
+		assertTrue(Files.exists(Paths.get(inputFilePath)));
+		assertFalse(Files.exists(Paths.get(outputFilePath)));
+
+		// Encrypt
+		SecretKey aesKey = AES.generateKey(256);
+		AES.encryptFile("AES", aesKey, inputFilePath, outputFilePath);
+		assertTrue(Files.exists(Paths.get(outputFilePath)));
+		byte[] encryptedBytes = Files.readAllBytes(Paths.get(outputFilePath));
+
+		// Delete the input file
+		Files.delete(Paths.get(inputFilePath));
+		assertFalse(Files.exists(Paths.get(inputFilePath)));
+
+		// Decrypt
+		String encryptedFilePath = outputFilePath;
+		assertFalse(Files.exists(Paths.get(decryptedFilePath)));
+		AES.decryptFile("AES", aesKey, encryptedFilePath, decryptedFilePath);
+		assertTrue(Files.exists(Paths.get(decryptedFilePath)));
+
+		// Delete the output file
+		Files.delete(Paths.get(outputFilePath));
+		assertFalse(Files.exists(Paths.get(outputFilePath)));
+
+		// Check that the decrypted file contents matches the original data
+		byte[] decryptedBytes = Files.readAllBytes(Paths.get(decryptedFilePath));
+		assertTrue(Arrays.equals(decryptedBytes, randomBytes));
+		assertEquals(1024, decryptedBytes.length);
+
+		// Write the original data back to the input file
+		outputStream = new FileOutputStream(inputFilePath);
+		outputStream.write(randomBytes);
+
+		// Now encrypt the data one more time using the same key
+		// This is to ensure the initialization vector produces a different result
+		AES.encryptFile("AES", aesKey, inputFilePath, reencryptedFilePath);
+		assertTrue(Files.exists(Paths.get(reencryptedFilePath)));
+
+		// Make sure the ciphertexts do not match
+		byte[] reencryptedBytes = Files.readAllBytes(Paths.get(reencryptedFilePath));
+		assertFalse(Arrays.equals(encryptedBytes, reencryptedBytes));
+
 	}
 
 }

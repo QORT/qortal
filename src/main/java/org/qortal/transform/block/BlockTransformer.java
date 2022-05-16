@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import org.qortal.account.PublicKeyAccount;
 import org.qortal.block.Block;
 import org.qortal.block.BlockChain;
 import org.qortal.data.at.ATStateData;
@@ -23,7 +22,6 @@ import org.qortal.utils.Base58;
 import org.qortal.utils.Serialization;
 import org.qortal.utils.Triple;
 
-import com.google.common.primitives.Bytes;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
 
@@ -76,19 +74,30 @@ public class BlockTransformer extends Transformer {
 	}
 
 	/**
-	 * Extract block data and transaction data from serialized bytes.
-	 * 
+	 * Extract block data and transaction data from serialized bytes containing a single block.
+	 *
 	 * @param bytes
 	 * @return BlockData and a List of transactions.
 	 * @throws TransformationException
 	 */
 	public static Triple<BlockData, List<TransactionData>, List<ATStateData>> fromByteBuffer(ByteBuffer byteBuffer) throws TransformationException {
+		return BlockTransformer.fromByteBuffer(byteBuffer, true);
+	}
+
+	/**
+	 * Extract block data and transaction data from serialized bytes containing one or more blocks.
+	 * 
+	 * @param bytes
+	 * @return the next block's BlockData and a List of transactions.
+	 * @throws TransformationException
+	 */
+	public static Triple<BlockData, List<TransactionData>, List<ATStateData>> fromByteBuffer(ByteBuffer byteBuffer, boolean finalBlockInBuffer) throws TransformationException {
 		int version = byteBuffer.getInt();
 
-		if (byteBuffer.remaining() < BASE_LENGTH + AT_BYTES_LENGTH - VERSION_LENGTH)
+		if (finalBlockInBuffer && byteBuffer.remaining() < BASE_LENGTH + AT_BYTES_LENGTH - VERSION_LENGTH)
 			throw new TransformationException("Byte data too short for Block");
 
-		if (byteBuffer.remaining() > BlockChain.getInstance().getMaxBlockSize())
+		if (finalBlockInBuffer && byteBuffer.remaining() > BlockChain.getInstance().getMaxBlockSize())
 			throw new TransformationException("Byte data too long for Block");
 
 		long timestamp = byteBuffer.getLong();
@@ -212,7 +221,8 @@ public class BlockTransformer extends Transformer {
 			byteBuffer.get(onlineAccountsSignatures);
 		}
 
-		if (byteBuffer.hasRemaining())
+		// We should only complain about excess byte data if we aren't expecting more blocks in this ByteBuffer
+		if (finalBlockInBuffer && byteBuffer.hasRemaining())
 			throw new TransformationException("Excess byte data found after parsing Block");
 
 		// We don't have a height!
@@ -328,33 +338,38 @@ public class BlockTransformer extends Transformer {
 		}
 	}
 
-	public static byte[] getMinterSignatureFromReference(byte[] blockReference) {
-		return Arrays.copyOf(blockReference, MINTER_SIGNATURE_LENGTH);
+	private static byte[] getReferenceBytesForMinterSignature(int blockHeight, byte[] reference) {
+		int newBlockSigTriggerHeight = BlockChain.getInstance().getNewBlockSigHeight();
+
+		return blockHeight >= newBlockSigTriggerHeight
+				// 'new' block sig uses all of previous block's signature
+				? reference
+				// 'old' block sig only uses first 64 bytes of previous block's signature
+				: Arrays.copyOf(reference, MINTER_SIGNATURE_LENGTH);
 	}
 
-	public static byte[] getBytesForMinterSignature(BlockData blockData) throws TransformationException {
-		byte[] minterSignature = getMinterSignatureFromReference(blockData.getReference());
-		PublicKeyAccount minter = new PublicKeyAccount(null, blockData.getMinterPublicKey());
+	public static byte[] getBytesForMinterSignature(BlockData blockData) {
+		byte[] referenceBytes = getReferenceBytesForMinterSignature(blockData.getHeight(), blockData.getReference());
 
-		return getBytesForMinterSignature(minterSignature, minter, blockData.getEncodedOnlineAccounts());
+		return getBytesForMinterSignature(referenceBytes, blockData.getMinterPublicKey(), blockData.getEncodedOnlineAccounts());
 	}
 
-	public static byte[] getBytesForMinterSignature(byte[] minterSignature, PublicKeyAccount minter, byte[] encodedOnlineAccounts)
-			throws TransformationException {
-		try {
-			ByteArrayOutputStream bytes = new ByteArrayOutputStream(MINTER_SIGNATURE_LENGTH + MINTER_PUBLIC_KEY_LENGTH + encodedOnlineAccounts.length);
+	public static byte[] getBytesForMinterSignature(BlockData parentBlockData, byte[] minterPublicKey, byte[] encodedOnlineAccounts) {
+		byte[] referenceBytes = getReferenceBytesForMinterSignature(parentBlockData.getHeight() + 1, parentBlockData.getSignature());
 
-			bytes.write(minterSignature);
+		return getBytesForMinterSignature(referenceBytes, minterPublicKey, encodedOnlineAccounts);
+	}
 
-			// We're padding here just in case the minter is the genesis account whose public key is only 8 bytes long.
-			bytes.write(Bytes.ensureCapacity(minter.getPublicKey(), MINTER_PUBLIC_KEY_LENGTH, 0));
+	private static byte[] getBytesForMinterSignature(byte[] referenceBytes, byte[] minterPublicKey, byte[] encodedOnlineAccounts) {
+		byte[] bytes = new byte[referenceBytes.length + MINTER_PUBLIC_KEY_LENGTH + encodedOnlineAccounts.length];
 
-			bytes.write(encodedOnlineAccounts);
+		System.arraycopy(referenceBytes, 0, bytes, 0, referenceBytes.length);
 
-			return bytes.toByteArray();
-		} catch (IOException e) {
-			throw new TransformationException(e);
-		}
+		System.arraycopy(minterPublicKey, 0, bytes, referenceBytes.length, MINTER_PUBLIC_KEY_LENGTH);
+
+		System.arraycopy(encodedOnlineAccounts, 0, bytes, referenceBytes.length + MINTER_PUBLIC_KEY_LENGTH, encodedOnlineAccounts.length);
+
+		return bytes;
 	}
 
 	public static byte[] getBytesForTransactionsSignature(Block block) throws TransformationException {

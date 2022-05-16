@@ -28,7 +28,8 @@ public class NTP implements Runnable {
 	private static volatile boolean isStopping = false;
 	private static ExecutorService instanceExecutor;
 	private static NTP instance;
-	private static volatile Long offset = null;
+	private static volatile boolean isOffsetSet = false;
+	private static volatile long offset = 0;
 
 	static class NTPServer {
 		private static final int MIN_POLL = 64;
@@ -136,6 +137,7 @@ public class NTP implements Runnable {
 	public static synchronized void setFixedOffset(Long offset) {
 		// Fix offset, e.g. for testing
 		NTP.offset = offset;
+		isOffsetSet = true;
 	}
 
 	/**
@@ -144,7 +146,7 @@ public class NTP implements Runnable {
 	 * @return internet time (ms), or null if unsynchronized.
 	 */
 	public static Long getTime() {
-		if (NTP.offset == null)
+		if (!isOffsetSet)
 			return null;
 
 		return System.currentTimeMillis() + NTP.offset;
@@ -248,6 +250,7 @@ public class NTP implements Runnable {
 						thresholdStddev, filteredMean, filteredStddev, numberValues, ntpServers.size()));
 
 				NTP.offset = (long) filteredMean;
+				isOffsetSet = true;
 				LOGGER.debug(() -> String.format("New NTP offset: %d", NTP.offset));
 			}
 		}

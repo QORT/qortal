@@ -3,6 +3,7 @@ package org.qortal.api;
 import java.io.IOException;
 
 import javax.servlet.RequestDispatcher;
+import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
@@ -17,7 +18,7 @@ public class ApiErrorHandler extends ErrorHandler {
 	private static final Logger LOGGER = LogManager.getLogger(ApiErrorHandler.class);
 
 	@Override
-	public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException {
+	public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
 		if (Settings.getInstance().isApiLoggingEnabled()) {
 			String requestURI = request.getRequestURI();
 

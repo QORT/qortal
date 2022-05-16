@@ -78,9 +78,10 @@ public class Name {
 		// Set name's last-updated timestamp
 		this.nameData.setUpdated(updateNameTransactionData.getTimestamp());
 
-		// Update name and data where appropriate
+		// Update name, reduced name, and data where appropriate
 		if (!updateNameTransactionData.getNewName().isEmpty()) {
 			this.nameData.setName(updateNameTransactionData.getNewName());
+			this.nameData.setReducedName(updateNameTransactionData.getReducedNewName());
 
 			// If we're changing the name, we need to delete old entry
 			this.repository.getNameRepository().delete(updateNameTransactionData.getName());
@@ -105,6 +106,9 @@ public class Name {
 
 		// We can find previous 'name' from update transaction
 		this.nameData.setName(updateNameTransactionData.getName());
+
+		// We can derive the previous 'reduced name' from the previous name
+		this.nameData.setReducedName(Unicode.sanitize(updateNameTransactionData.getName()));
 
 		// We might need to hunt for previous data value
 		if (!updateNameTransactionData.getNewData().isEmpty())
@@ -259,6 +263,10 @@ public class Name {
 			return null;
 
 		return previousTransactionData.getTimestamp();
+	}
+
+	public NameData getNameData() {
+		return this.nameData;
 	}
 
 }

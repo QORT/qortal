@@ -6,30 +6,34 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
+import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
 import javax.servlet.http.HttpServletRequest;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
+import javax.ws.rs.*;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 
-import org.qortal.api.ApiError;
-import org.qortal.api.ApiErrors;
-import org.qortal.api.ApiException;
-import org.qortal.api.ApiExceptionFactory;
-import org.qortal.api.Security;
+import org.qortal.api.*;
 import org.qortal.api.model.ConnectedPeer;
+import org.qortal.api.model.PeersSummary;
+import org.qortal.controller.Controller;
+import org.qortal.controller.Synchronizer;
+import org.qortal.controller.Synchronizer.SynchronizationResult;
+import org.qortal.data.block.BlockSummaryData;
 import org.qortal.data.network.PeerData;
 import org.qortal.network.Network;
+import org.qortal.network.Peer;
 import org.qortal.network.PeerAddress;
 import org.qortal.repository.DataException;
+import org.qortal.repository.Repository;
+import org.qortal.repository.RepositoryManager;
 import org.qortal.utils.ExecuteProduceConsume;
 import org.qortal.utils.NTP;
 
@@ -122,7 +126,8 @@ public class PeersResource {
 			)
 		}
 	)
-	public ExecuteProduceConsume.StatsSnapshot getEngineStats() {
+	@SecurityRequirement(name = "apiKey")
+	public ExecuteProduceConsume.StatsSnapshot getEngineStats(@HeaderParam(Security.API_KEY_HEADER) String apiKey) {
 		Security.checkApiCallAllowed(request);
 
 		return Network.getInstance().getStatsSnapshot();
@@ -159,7 +164,8 @@ public class PeersResource {
 	@ApiErrors({
 		ApiError.INVALID_NETWORK_ADDRESS, ApiError.REPOSITORY_ISSUE
 	})
-	public String addPeer(String address) {
+	@SecurityRequirement(name = "apiKey")
+	public String addPeer(@HeaderParam(Security.API_KEY_HEADER) String apiKey, String address) {
 		Security.checkApiCallAllowed(request);
 
 		final Long addedWhen = NTP.getTime();
@@ -213,7 +219,8 @@ public class PeersResource {
 	@ApiErrors({
 		ApiError.INVALID_NETWORK_ADDRESS, ApiError.REPOSITORY_ISSUE
 	})
-	public String removePeer(String address) {
+	@SecurityRequirement(name = "apiKey")
+	public String removePeer(@HeaderParam(Security.API_KEY_HEADER) String apiKey, String address) {
 		Security.checkApiCallAllowed(request);
 
 		try {
@@ -248,7 +255,8 @@ public class PeersResource {
 	@ApiErrors({
 		ApiError.REPOSITORY_ISSUE
 	})
-	public String removeKnownPeers(String address) {
+	@SecurityRequirement(name = "apiKey")
+	public String removeKnownPeers(@HeaderParam(Security.API_KEY_HEADER) String apiKey, String address) {
 		Security.checkApiCallAllowed(request);
 
 		try {
@@ -258,6 +266,102 @@ public class PeersResource {
 		} catch (DataException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
 		}
+	}
+
+	@POST
+	@Path("/commonblock")
+	@Operation(
+		summary = "Report common block with given peer.",
+		requestBody = @RequestBody(
+			required = true,
+			content = @Content(
+				mediaType = MediaType.TEXT_PLAIN,
+				schema = @Schema(
+					type = "string", example = "node2.qortal.org"
+				)
+			)
+		),
+		responses = {
+			@ApiResponse(
+				description = "the block",
+				content = @Content(
+					array = @ArraySchema(
+						schema = @Schema(
+							implementation = BlockSummaryData.class
+						)
+					)
+				)
+			)
+		}
+	)
+	@ApiErrors({ApiError.INVALID_DATA, ApiError.REPOSITORY_ISSUE})
+	@SecurityRequirement(name = "apiKey")
+	public List<BlockSummaryData> commonBlock(@HeaderParam(Security.API_KEY_HEADER) String apiKey, String targetPeerAddress) {
+		Security.checkApiCallAllowed(request);
+
+		try {
+			// Try to resolve passed address to make things easier
+			PeerAddress peerAddress = PeerAddress.fromString(targetPeerAddress);
+			InetSocketAddress resolvedAddress = peerAddress.toSocketAddress();
+
+			List<Peer> peers = Network.getInstance().getHandshakedPeers();
+			Peer targetPeer = peers.stream().filter(peer -> peer.getResolvedAddress().equals(resolvedAddress)).findFirst().orElse(null);
+
+			if (targetPeer == null)
+				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
+
+			try (final Repository repository = RepositoryManager.getRepository()) {
+				int ourInitialHeight = Controller.getInstance().getChainHeight();
+				boolean force = true;
+				List<BlockSummaryData> peerBlockSummaries = new ArrayList<>();
+
+				SynchronizationResult findCommonBlockResult = Synchronizer.getInstance().fetchSummariesFromCommonBlock(repository, targetPeer, ourInitialHeight, force, peerBlockSummaries, true);
+				if (findCommonBlockResult != SynchronizationResult.OK)
+					return null;
+
+				return peerBlockSummaries;
+			}
+		} catch (IllegalArgumentException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
+		} catch (UnknownHostException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		} catch (InterruptedException e) {
+			return null;
+		}
+	}
+
+	@GET
+	@Path("/summary")
+	@Operation(
+			summary = "Returns total inbound and outbound connections for connected peers",
+			responses = {
+					@ApiResponse(
+							content = @Content(
+									mediaType = MediaType.APPLICATION_JSON,
+									array = @ArraySchema(
+											schema = @Schema(
+													implementation = PeersSummary.class
+											)
+									)
+							)
+					)
+			}
+	)
+	public PeersSummary peersSummary() {
+		PeersSummary peersSummary = new PeersSummary();
+
+		List<Peer> connectedPeers = Network.getInstance().getConnectedPeers().stream().collect(Collectors.toList());
+		for (Peer peer : connectedPeers) {
+			if (!peer.isOutbound()) {
+				peersSummary.inboundConnections++;
+			}
+			else {
+				peersSummary.outboundConnections++;
+			}
+		}
+		return peersSummary;
 	}
 
 }

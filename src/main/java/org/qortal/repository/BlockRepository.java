@@ -61,6 +61,15 @@ public interface BlockRepository {
 	public int getHeightFromTimestamp(long timestamp) throws DataException;
 
 	/**
+	 * Returns block timestamp for a given height.
+	 *
+	 * @param height
+	 * @return timestamp, or 0 if height is out of bounds.
+	 * @throws DataException
+	 */
+	public long getTimestampFromHeight(int height) throws DataException;
+
+	/**
 	 * Return highest block height from repository.
 	 * 
 	 * @return height, or 0 if there are no blocks in DB (not very likely).
@@ -128,20 +137,43 @@ public interface BlockRepository {
 	 */
 	public List<BlockSummaryData> getBlockSummaries(int firstBlockHeight, int lastBlockHeight) throws DataException;
 
-	/**
-	 * Trim online accounts signatures from blocks older than passed timestamp.
-	 * 
-	 * @param timestamp
-	 * @return number of blocks trimmed
+	/** Returns height of first trimmable online accounts signatures. */
+	public int getOnlineAccountsSignaturesTrimHeight() throws DataException;
+
+	/** Sets new base height for trimming online accounts signatures.
+	 * <p>
+	 * NOTE: performs implicit <tt>repository.saveChanges()</tt>.
 	 */
-	public int trimOldOnlineAccountsSignatures(long timestamp) throws DataException;
+	public void setOnlineAccountsSignaturesTrimHeight(int trimHeight) throws DataException;
 
 	/**
-	 * Returns first (lowest height) block that doesn't link back to genesis block.
+	 * Trim online accounts signatures from blocks between passed heights.
 	 * 
+	 * @return number of blocks trimmed
+	 */
+	public int trimOldOnlineAccountsSignatures(int minHeight, int maxHeight) throws DataException;
+
+	/**
+	 * Returns first (lowest height) block that doesn't link back to specified block.
+	 * 
+	 * @param startHeight height of specified block
 	 * @throws DataException
 	 */
-	public BlockData getDetachedBlockSignature() throws DataException;
+	public BlockData getDetachedBlockSignature(int startHeight) throws DataException;
+
+
+	/** Returns height of first prunable block. */
+	public int getBlockPruneHeight() throws DataException;
+
+	/** Sets new base height for block pruning.
+	 * <p>
+	 * NOTE: performs implicit <tt>repository.saveChanges()</tt>.
+	 */
+	public void setBlockPruneHeight(int pruneHeight) throws DataException;
+
+	/** Prunes full block data between passed heights. Returns number of pruned rows. */
+	public int pruneBlocks(int minHeight, int maxHeight) throws DataException;
+
 
 	/**
 	 * Saves block into repository.

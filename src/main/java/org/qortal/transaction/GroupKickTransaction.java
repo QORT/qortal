@@ -90,6 +90,11 @@ public class GroupKickTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Update Group Membership
 		Group group = new Group(this.repository, this.groupKickTransactionData.getGroupId());

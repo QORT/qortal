@@ -67,6 +67,11 @@ public class GroupApprovalTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Find previous approval decision (if any) by this admin for pending transaction
 		GroupApprovalTransactionData previousApproval = this.repository.getTransactionRepository().getLatestApproval(this.groupApprovalTransactionData.getPendingSignature(), this.groupApprovalTransactionData.getAdminPublicKey());

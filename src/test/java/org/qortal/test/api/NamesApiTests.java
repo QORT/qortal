@@ -16,6 +16,8 @@ import org.qortal.test.common.ApiCommon;
 import org.qortal.test.common.Common;
 import org.qortal.test.common.TransactionUtils;
 import org.qortal.test.common.transaction.TestTransaction;
+import org.qortal.transaction.RegisterNameTransaction;
+import org.qortal.utils.NTP;
 
 public class NamesApiTests extends ApiCommon {
 
@@ -47,6 +49,7 @@ public class NamesApiTests extends ApiCommon {
 			String name = "test-name";
 
 			RegisterNameTransactionData transactionData = new RegisterNameTransactionData(TestTransaction.generateBase(alice), name, "{}");
+			transactionData.setFee(new RegisterNameTransaction(null, null).getUnitFee(transactionData.getTimestamp()));;
 			TransactionUtils.signAndMint(repository, transactionData, alice);
 
 			assertNotNull(this.namesResource.getNamesByAddress(alice.getAddress(), null, null, null));
@@ -62,6 +65,7 @@ public class NamesApiTests extends ApiCommon {
 			String name = "test-name";
 
 			RegisterNameTransactionData transactionData = new RegisterNameTransactionData(TestTransaction.generateBase(alice), name, "{}");
+			transactionData.setFee(new RegisterNameTransaction(null, null).getUnitFee(transactionData.getTimestamp()));;
 			TransactionUtils.signAndMint(repository, transactionData, alice);
 
 			assertNotNull(this.namesResource.getName(name));
@@ -77,6 +81,7 @@ public class NamesApiTests extends ApiCommon {
 			long price = 1_23456789L;
 
 			TransactionData transactionData = new RegisterNameTransactionData(TestTransaction.generateBase(alice), name, "{}");
+			transactionData.setFee(new RegisterNameTransaction(null, null).getUnitFee(transactionData.getTimestamp()));;
 			TransactionUtils.signAndMint(repository, transactionData, alice);
 
 			// Sell-name

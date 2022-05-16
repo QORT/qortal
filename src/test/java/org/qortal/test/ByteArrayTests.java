@@ -3,10 +3,12 @@ package org.qortal.test;
 import static org.junit.Assert.*;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.TreeMap;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -28,15 +30,13 @@ public class ByteArrayTests {
 		}
 	}
 
-	private void fillMap(Map<ByteArray, String> map) {
+	private static void fillMap(Map<ByteArray, String> map) {
 		for (byte[] testValue : testValues)
 			map.put(new ByteArray(testValue), String.valueOf(map.size()));
 	}
 
-	private byte[] dup(byte[] value) {
-		byte[] copiedValue = new byte[value.length];
-		System.arraycopy(value, 0, copiedValue, 0, copiedValue.length);
-		return copiedValue;
+	private static byte[] dup(byte[] value) {
+		return Arrays.copyOf(value, value.length);
 	}
 
 	@Test
@@ -92,7 +92,7 @@ public class ByteArrayTests {
 
 	@Test
 	@SuppressWarnings("unlikely-arg-type")
-	public void testMapContainsKey() {
+	public void testHashMapContainsKey() {
 		Map<ByteArray, String> testMap = new HashMap<>();
 		fillMap(testMap);
 
@@ -105,8 +105,59 @@ public class ByteArrayTests {
 
 		assertTrue("boxed not equal to primitive", ba.equals(copiedValue));
 
-		// This won't work because copiedValue.hashCode() will not match ba.hashCode()
-		assertFalse("Primitive shouldn't be found in map", testMap.containsKey(copiedValue));
+		/*
+		 * Unfortunately this doesn't work because HashMap::containsKey compares hashCodes first,
+		 * followed by object references, and copiedValue.hashCode() will never match ba.hashCode().
+		 */
+		assertFalse("Primitive shouldn't be found in HashMap", testMap.containsKey(copiedValue));
+	}
+
+	@Test
+	@SuppressWarnings("unlikely-arg-type")
+	public void testTreeMapContainsKey() {
+		Map<ByteArray, String> testMap = new TreeMap<>();
+		fillMap(testMap);
+
+		// Create new ByteArray object with an existing value.
+		byte[] copiedValue = dup(testValues.get(3));
+		ByteArray ba = new ByteArray(copiedValue);
+
+		// Confirm object can be found in map
+		assertTrue("ByteArray not found in map", testMap.containsKey(ba));
+
+		assertTrue("boxed not equal to primitive", ba.equals(copiedValue));
+
+		/*
+		 * Unfortunately this doesn't work because TreeMap::containsKey(x) wants to cast x to
+		 * Comparable<? super ByteArray> and byte[] does not fit <? super ByteArray>
+		 * so this throws a ClassCastException.
+		 */
+		try {
+			assertFalse("Primitive shouldn't be found in TreeMap", testMap.containsKey(copiedValue));
+			fail();
+		} catch (ClassCastException e) {
+			// Expected
+		}
+	}
+
+	@Test
+	@SuppressWarnings("unlikely-arg-type")
+	public void testArrayListContains() {
+		// Create new ByteArray object with an existing value.
+		byte[] copiedValue = dup(testValues.get(3));
+		ByteArray ba = new ByteArray(copiedValue);
+
+		// Confirm object can be found in list
+		assertTrue("ByteArray not found in map", testValues.contains(ba));
+
+		assertTrue("boxed not equal to primitive", ba.equals(copiedValue));
+
+		/*
+		 * Unfortunately this doesn't work because ArrayList::contains performs
+		 * copiedValue.equals(x) for each x in testValues, and byte[].equals()
+		 * simply compares object references, so will never match any ByteArray.
+		 */
+		assertFalse("Primitive shouldn't be found in ArrayList", testValues.contains(copiedValue));
 	}
 
 	@Test
@@ -116,8 +167,9 @@ public class ByteArrayTests {
 
 		byte[] copiedValue = dup(testValue);
 
+		System.out.println(String.format("Primitive hashCode: 0x%08x", testValue.hashCode()));
 		System.out.println(String.format("Boxed hashCode: 0x%08x", ba1.hashCode()));
-		System.out.println(String.format("Primitive hashCode: 0x%08x", copiedValue.hashCode()));
+		System.out.println(String.format("Duplicated primitive hashCode: 0x%08x", copiedValue.hashCode()));
 	}
 
 	@Test

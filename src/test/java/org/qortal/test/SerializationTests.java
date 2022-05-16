@@ -1,5 +1,6 @@
 package org.qortal.test;
 
+import org.junit.Ignore;
 import org.junit.Test;
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.data.transaction.TransactionData;

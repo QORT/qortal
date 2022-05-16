@@ -16,4 +16,8 @@ public enum ApiExceptionFactory {
 		return createException(request, apiError, null);
 	}
 
+	public ApiException createCustomException(HttpServletRequest request, ApiError apiError, String message) {
+		return new ApiException(apiError.getStatus(), apiError.getCode(), message, null);
+	}
+
 }

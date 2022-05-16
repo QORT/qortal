@@ -62,6 +62,11 @@ public class PaymentTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
 		// Wrap and delegate payment processing to Payment class.
 		new Payment(this.repository).process(this.paymentTransactionData.getSenderPublicKey(), getPaymentData());

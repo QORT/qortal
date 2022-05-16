@@ -4,6 +4,7 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -83,7 +84,8 @@ public abstract class Transaction {
 		ENABLE_FORGING(37, false),
 		REWARD_SHARE(38, false),
 		ACCOUNT_LEVEL(39, false),
-		TRANSFER_PRIVS(40, false);
+		TRANSFER_PRIVS(40, false),
+		PRESENCE(41, false);
 
 		public final int value;
 		public final boolean needsApproval;
@@ -225,6 +227,7 @@ public abstract class Transaction {
 		AT_IS_FINISHED(71),
 		NO_FLAG_PERMISSION(72),
 		NOT_MINTING_ACCOUNT(73),
+		REWARD_SHARE_UNKNOWN(76),
 		INVALID_REWARD_SHARE_PERCENT(77),
 		PUBLIC_KEY_UNKNOWN(78),
 		INVALID_PUBLIC_KEY(79),
@@ -243,7 +246,10 @@ public abstract class Transaction {
 		ACCOUNT_ALREADY_EXISTS(92),
 		INVALID_GROUP_BLOCK_DELAY(93),
 		INCORRECT_NONCE(94),
-		CHAT(999),
+		INVALID_TIMESTAMP_SIGNATURE(95),
+		ADDRESS_BLOCKED(96),
+		NAME_BLOCKED(97),
+		INVALID_BUT_OK(999),
 		NOT_YET_RELEASED(1000);
 
 		public final int value;
@@ -311,6 +317,10 @@ public abstract class Transaction {
 		return this.transactionData;
 	}
 
+	public void setRepository(Repository repository) {
+		this.repository = repository;
+	}
+
 	// More information
 
 	public static long getDeadline(TransactionData transactionData) {
@@ -324,7 +334,7 @@ public abstract class Transaction {
 
 	/** Returns whether transaction's fee is at least minimum unit fee as specified in blockchain config. */
 	public boolean hasMinimumFee() {
-		return this.transactionData.getFee() >= BlockChain.getInstance().getUnitFee();
+		return this.transactionData.getFee() >= this.getUnitFee(this.transactionData.getTimestamp());
 	}
 
 	public long feePerByte() {
@@ -337,9 +347,13 @@ public abstract class Transaction {
 
 	/** Returns whether transaction's fee is at least amount needed to cover byte-length of transaction. */
 	public boolean hasMinimumFeePerByte() {
-		long unitFee = BlockChain.getInstance().getUnitFee();
+		long unitFee = this.getUnitFee(this.transactionData.getTimestamp());
 		int maxBytePerUnitFee = BlockChain.getInstance().getMaxBytesPerUnitFee();
 
+		// If the unit fee is zero, any fee is enough to cover the byte-length of the transaction
+		if (unitFee == 0) {
+			return true;
+		}
 		return this.feePerByte() >= maxBytePerUnitFee / unitFee;
 	}
 
@@ -355,7 +369,18 @@ public abstract class Transaction {
 
 		int unitFeeCount = ((dataLength - 1) / maxBytePerUnitFee) + 1;
 
-		return BlockChain.getInstance().getUnitFee() * unitFeeCount;
+		return this.getUnitFee(this.transactionData.getTimestamp()) * unitFeeCount;
+	}
+
+	/**
+	 * Calculate unit fee for a given transaction type
+	 *
+	 * FUTURE: add "accountLevel" parameter if needed - the level of the transaction creator
+	 * @param timestamp - the transaction's timestamp (currently not used)
+	 * @return
+	 */
+	public long getUnitFee(Long timestamp) {
+		return BlockChain.getInstance().getUnitFee();
 	}
 
 	/**
@@ -368,6 +393,9 @@ public abstract class Transaction {
 	 * @return transaction version number
 	 */
 	public static int getVersionByTimestamp(long timestamp) {
+		if (timestamp >= BlockChain.getInstance().getTransactionV5Timestamp()) {
+			return 5;
+		}
 		return 4;
 	}
 
@@ -602,7 +630,8 @@ public abstract class Transaction {
 	public static List<TransactionData> getUnconfirmedTransactions(Repository repository) throws DataException {
 		BlockData latestBlockData = repository.getBlockRepository().getLastBlock();
 
-		List<TransactionData> unconfirmedTransactions = repository.getTransactionRepository().getUnconfirmedTransactions();
+		EnumSet<TransactionType> excludedTxTypes = EnumSet.of(TransactionType.CHAT, TransactionType.PRESENCE);
+		List<TransactionData> unconfirmedTransactions = repository.getTransactionRepository().getUnconfirmedTransactions(excludedTxTypes);
 
 		unconfirmedTransactions.sort(getDataComparator());
 
@@ -762,15 +791,20 @@ public abstract class Transaction {
 	/**
 	 * Import into our repository as a new, unconfirmed transaction.
 	 * <p>
-	 * Calls <tt>repository.saveChanges()</tt>
+	 * @implSpec <i>blocks</i> to obtain blockchain lock
+	 * <p>
+	 * If transaction is valid, then:
+	 * <ul>
+	 * <li>calls {@link Repository#discardChanges()}</li>
+	 * <li>calls {@link Controller#onNewTransaction(TransactionData, Peer)}</li>
+	 * </ul>
 	 * 
 	 * @throws DataException
 	 */
 	public ValidationResult importAsUnconfirmed() throws DataException {
 		// Attempt to acquire blockchain lock
 		ReentrantLock blockchainLock = Controller.getInstance().getBlockchainLock();
-		if (!blockchainLock.tryLock())
-			return ValidationResult.NO_BLOCKCHAIN_LOCK;
+		blockchainLock.lock();
 
 		try {
 			// Check transaction doesn't already exist
@@ -779,6 +813,8 @@ public abstract class Transaction {
 
 			// Fix up approval status
 			this.setInitialApprovalStatus();
+
+			this.preProcess();
 
 			ValidationResult validationResult = this.isValidUnconfirmed();
 			if (validationResult != ValidationResult.OK)
@@ -797,20 +833,45 @@ public abstract class Transaction {
 			repository.getTransactionRepository().save(transactionData);
 			repository.getTransactionRepository().unconfirmTransaction(transactionData);
 
-			/*
-			 * If CHAT transaction then ensure there's at least a skeleton account so people
-			 * can retrieve sender's public key using address, even if all their messages
-			 * expire.
-			 */
-			if (transactionData.getType() == TransactionType.CHAT)
-				this.getCreator().ensureAccount();
+			this.onImportAsUnconfirmed();
 
 			repository.saveChanges();
 
+			// Notify controller of new transaction
+			Controller.getInstance().onNewTransaction(transactionData);
+
 			return ValidationResult.OK;
 		} finally {
+			/*
+			 * We call discardChanges() to restart repository 'transaction', discarding any
+			 * transactional table locks, hence reducing possibility of deadlock or
+			 * "serialization failure" with HSQLDB due to reads.
+			 * 
+			 * "Serialization failure" most likely caused by existing transaction check above,
+			 * where multiple threads are importing transactions
+			 * and one thread finds existing an transaction, returns (unlocking blockchain lock),
+			 * then another thread immediately obtains lock, tries to delete above existing transaction
+			 * (e.g. older PRESENCE transaction) but can't because first thread's repository
+			 * session still has row-lock on existing transaction and hasn't yet closed
+			 * repository session. Deadlock caused by race condition.
+			 * 
+			 * Hence we clear any repository-based locks before releasing blockchain lock.
+			 */
+			repository.discardChanges();
+
 			blockchainLock.unlock();
 		}
+	}
+
+	/**
+	 * Callback for when a transaction is imported as unconfirmed.
+	 * <p>
+	 * Called after transaction is added to repository, but before commit.
+	 * <p>
+	 * Blockchain lock is being held during this time.
+	 */
+	protected void onImportAsUnconfirmed() throws DataException {
+		/* To be optionally overridden */
 	}
 
 	/**
@@ -854,6 +915,14 @@ public abstract class Transaction {
 	public ValidationResult isProcessable() throws DataException {
 		return ValidationResult.OK;
 	}
+
+	/**
+	 * * Pre-process a transaction before validating or processing the block
+	 * This allows for any database integrity checks prior to validation.
+	 *
+	 * @throws DataException
+	 */
+	public abstract void preProcess() throws DataException;
 
 	/**
 	 * Actually process a transaction, updating the blockchain.

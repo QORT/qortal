@@ -136,7 +136,7 @@ public class RewardShareTransaction extends Transaction {
 
 			// Deleting a non-existent reward-share makes no sense
 			if (isCancellingSharePercent)
-				return ValidationResult.INVALID_REWARD_SHARE_PERCENT;
+				return ValidationResult.REWARD_SHARE_UNKNOWN;
 
 			// Check the minting account hasn't reach maximum number of reward-shares
 			int rewardShareCount = this.repository.getAccountRepository().countRewardShares(creator.getPublicKey());
@@ -157,6 +157,11 @@ public class RewardShareTransaction extends Transaction {
 				return ValidationResult.NO_BALANCE;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

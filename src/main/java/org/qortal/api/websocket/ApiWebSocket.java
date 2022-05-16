@@ -3,7 +3,10 @@ package org.qortal.api.websocket;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.io.Writer;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import javax.xml.bind.JAXBContext;
@@ -13,24 +16,28 @@ import javax.xml.bind.Marshaller;
 import org.eclipse.jetty.http.pathmap.UriTemplatePathSpec;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.servlet.ServletUpgradeRequest;
+import org.eclipse.jetty.websocket.servlet.WebSocketServlet;
 import org.eclipse.persistence.jaxb.JAXBContextFactory;
 import org.eclipse.persistence.jaxb.MarshallerProperties;
 import org.qortal.api.ApiError;
 import org.qortal.api.ApiErrorRoot;
 
-interface ApiWebSocket {
+@SuppressWarnings("serial")
+abstract class ApiWebSocket extends WebSocketServlet {
 
-	default String getPathInfo(Session session) {
+	private static final Map<Class<? extends ApiWebSocket>, List<Session>> SESSIONS_BY_CLASS = new HashMap<>();
+
+	protected static String getPathInfo(Session session) {
 		ServletUpgradeRequest upgradeRequest = (ServletUpgradeRequest) session.getUpgradeRequest();
 		return upgradeRequest.getHttpServletRequest().getPathInfo();
 	}
 
-	default Map<String, String> getPathParams(Session session, String pathSpec) {
+	protected static Map<String, String> getPathParams(Session session, String pathSpec) {
 		UriTemplatePathSpec uriTemplatePathSpec = new UriTemplatePathSpec(pathSpec);
-		return uriTemplatePathSpec.getPathParams(this.getPathInfo(session));
+		return uriTemplatePathSpec.getPathParams(getPathInfo(session));
 	}
 
-	default void sendError(Session session, ApiError apiError) {
+	protected static void sendError(Session session, ApiError apiError) {
 		ApiErrorRoot apiErrorRoot = new ApiErrorRoot();
 		apiErrorRoot.setApiError(apiError);
 
@@ -43,7 +50,7 @@ interface ApiWebSocket {
 		}
 	}
 
-	default void marshall(Writer writer, Object object) throws IOException {
+	protected static void marshall(Writer writer, Object object) throws IOException {
 		Marshaller marshaller = createMarshaller(object.getClass());
 
 		try {
@@ -53,7 +60,7 @@ interface ApiWebSocket {
 		}
 	}
 
-	default void marshall(Writer writer, Collection<?> collection) throws IOException {
+	protected static void marshall(Writer writer, Collection<?> collection) throws IOException {
 		// If collection is empty then we're returning "[]" anyway
 		if (collection.isEmpty()) {
 			writer.append("[]");
@@ -89,6 +96,26 @@ interface ApiWebSocket {
 			return marshaller;
 		} catch (JAXBException e) {
 			throw new RuntimeException("Unable to create websocket marshaller", e);
+		}
+	}
+
+	public void onWebSocketConnect(Session session) {
+		synchronized (SESSIONS_BY_CLASS) {
+			SESSIONS_BY_CLASS.computeIfAbsent(this.getClass(), clazz -> new ArrayList<>()).add(session);
+		}
+	}
+
+	public void onWebSocketClose(Session session, int statusCode, String reason) {
+		synchronized (SESSIONS_BY_CLASS) {
+			List<Session> sessions = SESSIONS_BY_CLASS.get(this.getClass());
+			if (sessions != null)
+				sessions.remove(session);
+		}
+	}
+
+	protected List<Session> getSessions() {
+		synchronized (SESSIONS_BY_CLASS) {
+			return new ArrayList<>(SESSIONS_BY_CLASS.get(this.getClass()));
 		}
 	}
 

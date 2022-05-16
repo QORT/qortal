@@ -20,15 +20,19 @@ public class AccountUtils {
 	public static final int txGroupId = Group.NO_GROUP;
 	public static final long fee = 1L * Amounts.MULTIPLIER;
 
-	public static void pay(Repository repository, String sender, String recipient, long amount) throws DataException {
-		PrivateKeyAccount sendingAccount = Common.getTestAccount(repository, sender);
-		PrivateKeyAccount recipientAccount = Common.getTestAccount(repository, recipient);
+	public static void pay(Repository repository, String testSenderName, String testRecipientName, long amount) throws DataException {
+		PrivateKeyAccount sendingAccount = Common.getTestAccount(repository, testSenderName);
+		PrivateKeyAccount recipientAccount = Common.getTestAccount(repository, testRecipientName);
 
+		pay(repository, sendingAccount, recipientAccount.getAddress(), amount);
+	}
+
+	public static void pay(Repository repository, PrivateKeyAccount sendingAccount, String recipientAddress, long amount) throws DataException {
 		byte[] reference = sendingAccount.getLastReference();
 		long timestamp = repository.getTransactionRepository().fromSignature(reference).getTimestamp() + 1;
 
 		BaseTransactionData baseTransactionData = new BaseTransactionData(timestamp, txGroupId, reference, sendingAccount.getPublicKey(), fee, null);
-		TransactionData transactionData = new PaymentTransactionData(baseTransactionData, recipientAccount.getAddress(), amount);
+		TransactionData transactionData = new PaymentTransactionData(baseTransactionData, recipientAddress, amount);
 
 		TransactionUtils.signAndMint(repository, transactionData, sendingAccount);
 	}

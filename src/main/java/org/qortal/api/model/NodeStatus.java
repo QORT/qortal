@@ -4,6 +4,7 @@ import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 
 import org.qortal.controller.Controller;
+import org.qortal.controller.Synchronizer;
 import org.qortal.network.Network;
 
 @XmlAccessorType(XmlAccessType.FIELD)
@@ -20,17 +21,14 @@ public class NodeStatus {
 	public final int height;
 
 	public NodeStatus() {
-		isMintingPossible = Controller.getInstance().isMintingPossible();
-		isSynchronizing = Controller.getInstance().isSynchronizing();
+		this.isMintingPossible = Controller.getInstance().isMintingPossible();
 
-		if (isSynchronizing)
-			syncPercent = Controller.getInstance().getSyncPercent();
-		else
-			syncPercent = null;
+		this.syncPercent = Synchronizer.getInstance().getSyncPercent();
+		this.isSynchronizing = this.syncPercent != null;
 
-		numberOfConnections = Network.getInstance().getHandshakedPeers().size();
+		this.numberOfConnections = Network.getInstance().getHandshakedPeers().size();
 
-		height = Controller.getInstance().getChainHeight();
+		this.height = Controller.getInstance().getChainHeight();
 	}
 
 }

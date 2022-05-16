@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.qortal.account.PrivateKeyAccount;
+import org.qortal.arbitrary.misc.Service;
 import org.qortal.asset.Asset;
 import org.qortal.data.PaymentData;
 import org.qortal.data.transaction.ArbitraryTransactionData;
@@ -16,8 +17,21 @@ import org.qortal.utils.Amounts;
 public class ArbitraryTestTransaction extends TestTransaction {
 
 	public static TransactionData randomTransaction(Repository repository, PrivateKeyAccount account, boolean wantValid) throws DataException {
-		final int version = 4;
-		final int service = 123;
+		final int version = 5;
+		final Service service = Service.ARBITRARY_DATA;
+		final int nonce = 0;
+		final int size = 4 * 1024 * 1024;
+		final String name = "TEST";
+		final String identifier = "qortal_avatar";
+		final ArbitraryTransactionData.Method method = ArbitraryTransactionData.Method.PUT;
+
+		final byte[] secret = new byte[32];
+		random.nextBytes(secret);
+
+        final ArbitraryTransactionData.Compression compression = ArbitraryTransactionData.Compression.ZIP;
+
+		final byte[] metadataHash = new byte[32];
+		random.nextBytes(metadataHash);
 
 		byte[] data = new byte[1024];
 		random.nextBytes(data);
@@ -31,7 +45,8 @@ public class ArbitraryTestTransaction extends TestTransaction {
 		List<PaymentData> payments = new ArrayList<>();
 		payments.add(new PaymentData(recipient, assetId, amount));
 
-		return new ArbitraryTransactionData(generateBase(account), version, service, data, dataType, payments);
+		return new ArbitraryTransactionData(generateBase(account), version, service, nonce, size,name, identifier,
+				method, secret, compression, data, dataType, metadataHash, payments);
 	}
 
 }

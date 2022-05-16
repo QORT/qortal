@@ -40,8 +40,9 @@ public class Payment {
 	public ValidationResult isValid(byte[] senderPublicKey, List<PaymentData> payments, long fee, boolean isZeroAmountValid) throws DataException {
 		AssetRepository assetRepository = this.repository.getAssetRepository();
 
-		// Check fee is positive
-		if (fee <= 0)
+		// Check fee is positive or zero
+		// We have already checked that the fee is correct in the Transaction superclass
+		if (fee < 0)
 			return ValidationResult.NEGATIVE_FEE;
 
 		// Total up payment amounts by assetId

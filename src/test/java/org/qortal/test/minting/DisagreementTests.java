@@ -10,7 +10,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.qortal.account.PrivateKeyAccount;
-import org.qortal.block.BlockMinter;
+import org.qortal.controller.BlockMinter;
 import org.qortal.controller.Controller;
 import org.qortal.data.account.RewardShareData;
 import org.qortal.data.block.BlockData;

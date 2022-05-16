@@ -100,12 +100,26 @@ public class Serialization {
 		return bytes;
 	}
 
+	/**
+	 * Original serializeSizedString() method used in various transaction types
+	 * @param bytes
+	 * @param string
+	 * @throws UnsupportedEncodingException
+	 * @throws IOException
+	 */
 	public static void serializeSizedString(ByteArrayOutputStream bytes, String string) throws UnsupportedEncodingException, IOException {
 		byte[] stringBytes = string.getBytes(StandardCharsets.UTF_8);
 		bytes.write(Ints.toByteArray(stringBytes.length));
 		bytes.write(stringBytes);
 	}
 
+	/**
+	 * Original deserializeSizedString() method used in various transaction types
+	 * @param byteBuffer
+	 * @param maxSize
+	 * @return
+	 * @throws TransformationException
+	 */
 	public static String deserializeSizedString(ByteBuffer byteBuffer, int maxSize) throws TransformationException {
 		int size = byteBuffer.getInt();
 		if (size > maxSize)
@@ -113,6 +127,56 @@ public class Serialization {
 
 		if (size > byteBuffer.remaining())
 			throw new TransformationException("Byte data too short for serialized string");
+
+		byte[] bytes = new byte[size];
+		byteBuffer.get(bytes);
+
+		return new String(bytes, StandardCharsets.UTF_8);
+	}
+
+	/**
+	 * Alternate version of serializeSizedString() added for ARBITRARY transactions.
+	 * These two methods can ultimately be merged together once unit tests can
+	 * confirm that they process data identically.
+	 * @param bytes
+	 * @param string
+	 * @throws UnsupportedEncodingException
+	 * @throws IOException
+	 */
+	public static void serializeSizedStringV2(ByteArrayOutputStream bytes, String string) throws UnsupportedEncodingException, IOException {
+		byte[] stringBytes = null;
+		int stringBytesLength = 0;
+
+		if (string != null) {
+			stringBytes = string.getBytes(StandardCharsets.UTF_8);
+			stringBytesLength = stringBytes.length;
+		}
+		bytes.write(Ints.toByteArray(stringBytesLength));
+		if (stringBytesLength > 0) {
+			bytes.write(stringBytes);
+		}
+	}
+
+	/**
+	 * Alternate version of serializeSizedString() added for ARBITRARY transactions.
+	 * The main difference is that blank strings are returned as null.
+	 * These two methods can ultimately be merged together once any differences are
+	 * solved, and unit tests can confirm that they process data identically.
+	 * @param byteBuffer
+	 * @param maxSize
+	 * @return
+	 * @throws TransformationException
+	 */
+	public static String deserializeSizedStringV2(ByteBuffer byteBuffer, int maxSize) throws TransformationException {
+		int size = byteBuffer.getInt();
+		if (size > maxSize)
+			throw new TransformationException("Serialized string too long");
+
+		if (size > byteBuffer.remaining())
+			throw new TransformationException("Byte data too short for serialized string");
+
+		if (size == 0)
+			return null;
 
 		byte[] bytes = new byte[size];
 		byteBuffer.get(bytes);

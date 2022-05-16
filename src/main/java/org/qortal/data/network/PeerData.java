@@ -13,6 +13,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 @XmlAccessorType(XmlAccessType.FIELD)
 public class PeerData {
 
+	public static final int MAX_PEER_ADDRESS_SIZE = 255;
+
 	// Properties
 
 	// Don't expose this via JAXB - use pretty getter instead
