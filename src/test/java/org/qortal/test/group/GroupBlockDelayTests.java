@@ -1,7 +1,5 @@
 package org.qortal.test.group;
 
-import static org.junit.Assert.*;
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -20,6 +18,9 @@ import org.qortal.transaction.CreateGroupTransaction;
 import org.qortal.transaction.Transaction;
 import org.qortal.transaction.Transaction.ValidationResult;
 import org.qortal.transaction.UpdateGroupTransaction;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotSame;
 
 public class GroupBlockDelayTests extends Common {
 

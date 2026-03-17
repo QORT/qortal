@@ -1,11 +1,11 @@
 package org.qortal.test.api;
 
-import static org.junit.Assert.*;
-
 import org.junit.Before;
 import org.junit.Test;
 import org.qortal.api.resource.GroupsResource;
 import org.qortal.test.common.ApiCommon;
+
+import static org.junit.Assert.assertNotNull;
 
 public class GroupApiTests extends ApiCommon {
 
@@ -52,7 +52,7 @@ public class GroupApiTests extends ApiCommon {
 
 	@Test
 	public void testGetGroupsWithMember() {
-		assertNotNull(this.groupsResource.getGroupsWithMember(aliceAddress));
+		assertNotNull(this.groupsResource.getGroupsWithMember(aliceAddress, null, null));
 	}
 
 	@Test

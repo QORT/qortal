@@ -1,28 +1,44 @@
 package org.qortal.network.message;
 
+import com.google.common.primitives.Longs;
+import org.qortal.transform.TransformationException;
+import org.qortal.utils.Serialization;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
-import org.qortal.transform.TransformationException;
-import org.qortal.utils.Serialization;
-
-import com.google.common.primitives.Longs;
-
 public class HelloMessage extends Message {
 
-	private final long timestamp;
-	private final String versionString;
+	private long timestamp;
+	private String versionString;
+	private String senderPeerAddress;
 
-	private HelloMessage(int id, long timestamp, String versionString) {
+	public HelloMessage(long timestamp, String versionString, String senderPeerAddress) {
+		super(MessageType.HELLO);
+
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+
+		try {
+			bytes.write(Longs.toByteArray(timestamp));
+
+			Serialization.serializeSizedString(bytes, versionString);
+
+			Serialization.serializeSizedString(bytes, senderPeerAddress);
+		} catch (IOException e) {
+			throw new AssertionError("IOException shouldn't occur with ByteArrayOutputStream");
+		}
+
+		this.dataBytes = bytes.toByteArray();
+		this.checksumBytes = Message.generateChecksum(this.dataBytes);
+	}
+
+	private HelloMessage(int id, long timestamp, String versionString, String senderPeerAddress) {
 		super(id, MessageType.HELLO);
 
 		this.timestamp = timestamp;
 		this.versionString = versionString;
-	}
-
-	public HelloMessage(long timestamp, String versionString) {
-		this(-1, timestamp, versionString);
+		this.senderPeerAddress = senderPeerAddress;
 	}
 
 	public long getTimestamp() {
@@ -33,23 +49,27 @@ public class HelloMessage extends Message {
 		return this.versionString;
 	}
 
-	public static Message fromByteBuffer(int id, ByteBuffer byteBuffer) throws TransformationException {
-		long timestamp = byteBuffer.getLong();
-
-		String versionString = Serialization.deserializeSizedString(byteBuffer, 255);
-
-		return new HelloMessage(id, timestamp, versionString);
+	public String getSenderPeerAddress() {
+		return this.senderPeerAddress;
 	}
 
-	@Override
-	protected byte[] toData() throws IOException {
-		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+	public static Message fromByteBuffer(int id, ByteBuffer byteBuffer) throws MessageException {
+		long timestamp = byteBuffer.getLong();
 
-		bytes.write(Longs.toByteArray(this.timestamp));
+		String versionString;
+		String senderPeerAddress = null;
+		try {
+			versionString = Serialization.deserializeSizedString(byteBuffer, 255);
 
-		Serialization.serializeSizedString(bytes, this.versionString);
+			// Sender peer address added in v3.0, so is an optional field. Older versions won't send it.
+			if (byteBuffer.hasRemaining()) {
+				senderPeerAddress = Serialization.deserializeSizedString(byteBuffer, 255);
+			}
+		} catch (TransformationException e) {
+			throw new MessageException(e.getMessage(), e);
+		}
 
-		return bytes.toByteArray();
+		return new HelloMessage(id, timestamp, versionString, senderPeerAddress);
 	}
 
 }

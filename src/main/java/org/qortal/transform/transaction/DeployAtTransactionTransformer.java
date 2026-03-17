@@ -1,9 +1,8 @@
 package org.qortal.transform.transaction;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.ByteBuffer;
-
+import com.google.common.base.Utf8;
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
 import org.qortal.data.transaction.BaseTransactionData;
 import org.qortal.data.transaction.DeployAtTransactionData;
 import org.qortal.data.transaction.TransactionData;
@@ -12,9 +11,9 @@ import org.qortal.transaction.Transaction.TransactionType;
 import org.qortal.transform.TransformationException;
 import org.qortal.utils.Serialization;
 
-import com.google.common.base.Utf8;
-import com.google.common.primitives.Ints;
-import com.google.common.primitives.Longs;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class DeployAtTransactionTransformer extends TransactionTransformer {
 

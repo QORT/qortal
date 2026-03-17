@@ -1,12 +1,12 @@
 package org.qortal.repository;
 
-import java.util.List;
-
 import org.qortal.api.model.BlockSignerSummary;
 import org.qortal.data.block.BlockData;
 import org.qortal.data.block.BlockSummaryData;
 import org.qortal.data.block.BlockTransactionData;
 import org.qortal.data.transaction.TransactionData;
+
+import java.util.List;
 
 public interface BlockRepository {
 
@@ -18,6 +18,19 @@ public interface BlockRepository {
 	 * @throws DataException
 	 */
 	public BlockData fromSignature(byte[] signature) throws DataException;
+
+	/**
+	 * From Signatures
+	 *
+	 * Get the block data for each block signature given.
+	 *
+	 * @param signatures the signatures
+	 *
+	 * @return the block data
+	 *
+	 * @throws DataException
+	 */
+	public List<BlockData> fromSignatures(List<byte[]> signatures) throws DataException;
 
 	/**
 	 * Returns BlockData from repository using block reference.
@@ -59,6 +72,15 @@ public interface BlockRepository {
 	 * @throws DataException
 	 */
 	public int getHeightFromTimestamp(long timestamp) throws DataException;
+
+	/**
+	 * Returns block timestamp for a given height.
+	 *
+	 * @param height
+	 * @return timestamp, or 0 if height is out of bounds.
+	 * @throws DataException
+	 */
+	public long getTimestampFromHeight(int height) throws DataException;
 
 	/**
 	 * Return highest block height from repository.
@@ -124,24 +146,58 @@ public interface BlockRepository {
 	public List<BlockData> getBlocks(int firstBlockHeight, int lastBlockHeight) throws DataException;
 
 	/**
+	 * Returns blocks within height range.
+	 */
+	public Long getTotalFeesInBlockRange(int firstBlockHeight, int lastBlockHeight) throws DataException;
+
+	/**
+	 * Returns block with highest online accounts count in specified range. If more than one block
+	 * has the same high count, the oldest one is returned.
+	 */
+	public BlockData getBlockInRangeWithHighestOnlineAccountsCount(int firstBlockHeight, int lastBlockHeight) throws DataException;
+
+	/**
 	 * Returns block summaries for the passed height range.
 	 */
 	public List<BlockSummaryData> getBlockSummaries(int firstBlockHeight, int lastBlockHeight) throws DataException;
 
-	/**
-	 * Trim online accounts signatures from blocks older than passed timestamp.
-	 * 
-	 * @param timestamp
-	 * @return number of blocks trimmed
+	/** Returns height of first trimmable online accounts signatures. */
+	public int getOnlineAccountsSignaturesTrimHeight() throws DataException;
+
+	/** Sets new base height for trimming online accounts signatures.
+	 * <p>
+	 * NOTE: performs implicit <tt>repository.saveChanges()</tt>.
 	 */
-	public int trimOldOnlineAccountsSignatures(long timestamp) throws DataException;
+	public void setOnlineAccountsSignaturesTrimHeight(int trimHeight) throws DataException;
 
 	/**
-	 * Returns first (lowest height) block that doesn't link back to genesis block.
+	 * Trim online accounts signatures from blocks between passed heights.
 	 * 
+	 * @return number of blocks trimmed
+	 */
+	public int trimOldOnlineAccountsSignatures(int minHeight, int maxHeight) throws DataException;
+
+	/**
+	 * Returns first (lowest height) block that doesn't link back to specified block.
+	 * 
+	 * @param startHeight height of specified block
 	 * @throws DataException
 	 */
-	public BlockData getDetachedBlockSignature() throws DataException;
+	public BlockData getDetachedBlockSignature(int startHeight) throws DataException;
+
+
+	/** Returns height of first prunable block. */
+	public int getBlockPruneHeight() throws DataException;
+
+	/** Sets new base height for block pruning.
+	 * <p>
+	 * NOTE: performs implicit <tt>repository.saveChanges()</tt>.
+	 */
+	public void setBlockPruneHeight(int pruneHeight) throws DataException;
+
+	/** Prunes full block data between passed heights. Returns number of pruned rows. */
+	public int pruneBlocks(int minHeight, int maxHeight) throws DataException;
+
 
 	/**
 	 * Saves block into repository.

@@ -1,10 +1,10 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
+import com.google.common.base.Utf8;
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
+import org.qortal.block.BlockChain;
+import org.qortal.controller.repository.NamesDatabaseIntegrityCheck;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.naming.NameData;
 import org.qortal.data.transaction.TransactionData;
@@ -14,7 +14,9 @@ import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.utils.Unicode;
 
-import com.google.common.base.Utf8;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
 
 public class UpdateNameTransaction extends Transaction {
 
@@ -47,6 +49,12 @@ public class UpdateNameTransaction extends Transaction {
 	@Override
 	public ValidationResult isValid() throws DataException {
 		String name = this.updateNameTransactionData.getName();
+
+		// if the account has more than one name, then they cannot update their primary name
+		if( this.repository.getNameRepository().getNamesByOwner(this.getOwner().getAddress()).size() > 1 &&
+				this.getOwner().getPrimaryName().get().equals(name) ) {
+			return ValidationResult.NOT_SUPPORTED;
+		}
 
 		// Check name size bounds
 		int nameLength = Utf8.encodedLength(name);
@@ -116,12 +124,31 @@ public class UpdateNameTransaction extends Transaction {
 		if (!owner.getAddress().equals(nameData.getOwner()))
 			return ValidationResult.INVALID_NAME_OWNER;
 
-		// Check new name isn't already taken, unless it is the same name (this allows for case-adjusting renames)
-		NameData newNameData = this.repository.getNameRepository().fromReducedName(this.updateNameTransactionData.getReducedNewName());
-		if (newNameData != null && !newNameData.getName().equals(nameData.getName()))
-			return ValidationResult.NAME_ALREADY_REGISTERED;
+		// Additional checks if transaction intends to change name
+		if (!this.updateNameTransactionData.getNewName().isEmpty()) {
+			// Check new name isn't already taken, unless it is the same name (this allows for case-adjusting renames)
+			NameData newNameData = this.repository.getNameRepository().fromReducedName(this.updateNameTransactionData.getReducedNewName());
+			if (newNameData != null && !newNameData.getName().equals(nameData.getName()))
+				return ValidationResult.NAME_ALREADY_REGISTERED;
+		}
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		UpdateNameTransactionData updateNameTransactionData = (UpdateNameTransactionData) transactionData;
+
+		// Rebuild this name in the Names table from the transaction history
+		// This is necessary because in some rare cases names can be missing from the Names table after registration
+		// but we have been unable to reproduce the issue and track down the root cause
+		NamesDatabaseIntegrityCheck namesDatabaseIntegrityCheck = new NamesDatabaseIntegrityCheck();
+		namesDatabaseIntegrityCheck.rebuildName(updateNameTransactionData.getName(), this.repository);
+
+		if (!Objects.equals(updateNameTransactionData.getName(), updateNameTransactionData.getNewName())) {
+			// Renaming - so make sure the new name is rebuilt too
+			namesDatabaseIntegrityCheck.rebuildName(updateNameTransactionData.getNewName(), this.repository);
+		}
 	}
 
 	@Override

@@ -1,8 +1,6 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
+import com.google.common.base.Utf8;
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.data.transaction.CreateGroupTransactionData;
@@ -12,7 +10,8 @@ import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.utils.Unicode;
 
-import com.google.common.base.Utf8;
+import java.util.Collections;
+import java.util.List;
 
 public class CreateGroupTransaction extends Transaction {
 
@@ -90,6 +89,11 @@ public class CreateGroupTransaction extends Transaction {
 			return ValidationResult.GROUP_ALREADY_EXISTS;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

@@ -1,15 +1,15 @@
 package org.qortal.repository.hsqldb;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.List;
-
 import org.qortal.data.voting.PollData;
 import org.qortal.data.voting.PollOptionData;
 import org.qortal.data.voting.VoteOnPollData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.VotingRepository;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 
 public class HSQLDBVotingRepository implements VotingRepository {
 
@@ -20,6 +20,55 @@ public class HSQLDBVotingRepository implements VotingRepository {
 	}
 
 	// Polls
+
+	@Override
+	public List<PollData> getAllPolls(Integer limit, Integer offset, Boolean reverse) throws DataException {
+		StringBuilder sql = new StringBuilder(512);
+
+		sql.append("SELECT poll_name, description, creator, owner, published_when FROM Polls ORDER BY poll_name");
+
+		if (reverse != null && reverse)
+			sql.append(" DESC");
+
+		HSQLDBRepository.limitOffsetSql(sql, limit, offset);
+
+		List<PollData> polls = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString())) {
+			if (resultSet == null)
+				return polls;
+
+			do {
+				String pollName = resultSet.getString(1);
+				String description = resultSet.getString(2);
+				byte[] creatorPublicKey = resultSet.getBytes(3);
+				String owner = resultSet.getString(4);
+				long published = resultSet.getLong(5);
+
+				String optionsSql = "SELECT option_name FROM PollOptions WHERE poll_name = ? ORDER BY option_index ASC";
+				try (ResultSet optionsResultSet = this.repository.checkedExecute(optionsSql, pollName)) {
+					if (optionsResultSet == null)
+						return null;
+
+					List<PollOptionData> pollOptions = new ArrayList<>();
+
+					// NOTE: do-while because checkedExecute() above has already called rs.next() for us
+					do {
+						String optionName = optionsResultSet.getString(1);
+
+						pollOptions.add(new PollOptionData(optionName));
+					} while (optionsResultSet.next());
+
+					polls.add(new PollData(creatorPublicKey, owner, pollName, description, pollOptions, published));
+				}
+				
+			} while (resultSet.next());
+
+			return polls;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch polls from repository", e);
+		}
+	}
 
 	@Override
 	public PollData fromPollName(String pollName) throws DataException {

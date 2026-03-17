@@ -1,14 +1,14 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
 import org.qortal.block.BlockChain;
 import org.qortal.data.transaction.AccountLevelTransactionData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.Collections;
+import java.util.List;
 
 public class AccountLevelTransaction extends Transaction {
 
@@ -47,6 +47,11 @@ public class AccountLevelTransaction extends Transaction {
 	public ValidationResult isValid() throws DataException {
 		// Invalid outside of genesis block
 		return ValidationResult.NO_FLAG_PERMISSION;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

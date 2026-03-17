@@ -1,10 +1,9 @@
 package org.qortal.api;
 
-import java.math.BigDecimal;
+import org.qortal.utils.Amounts;
 
 import javax.xml.bind.annotation.adapters.XmlAdapter;
-
-import org.qortal.utils.Amounts;
+import java.math.BigDecimal;
 
 public class AmountTypeAdapter extends XmlAdapter<String, Long> {
 

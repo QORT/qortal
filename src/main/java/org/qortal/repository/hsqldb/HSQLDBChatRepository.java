@@ -1,31 +1,40 @@
 package org.qortal.repository.hsqldb;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.List;
-
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.qortal.block.BlockChain;
 import org.qortal.data.chat.ActiveChats;
 import org.qortal.data.chat.ActiveChats.DirectChat;
 import org.qortal.data.chat.ActiveChats.GroupChat;
 import org.qortal.data.chat.ChatMessage;
+import org.qortal.data.group.GroupMemberData;
 import org.qortal.data.transaction.ChatTransactionData;
 import org.qortal.repository.ChatRepository;
 import org.qortal.repository.DataException;
 import org.qortal.transaction.Transaction.TransactionType;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+
+import static org.qortal.data.chat.ChatMessage.Encoding;
+
 public class HSQLDBChatRepository implements ChatRepository {
+
+	private static final Logger LOGGER = LogManager.getLogger(HSQLDBChatRepository.class);
 
 	protected HSQLDBRepository repository;
 
 	public HSQLDBChatRepository(HSQLDBRepository repository) {
 		this.repository = repository;
 	}
-
+	
 	@Override
-	public List<ChatMessage> getMessagesMatchingCriteria(Long before, Long after, Integer txGroupId,
-			List<String> involving, Integer limit, Integer offset, Boolean reverse)
-			throws DataException {
+	public List<ChatMessage> getMessagesMatchingCriteria(Long before, Long after, Integer txGroupId, byte[] referenceBytes,
+														 byte[] chatReferenceBytes, Boolean hasChatReference, List<String> involving, String senderAddress,
+														 Encoding encoding, Integer limit, Integer offset, Boolean reverse) throws DataException {
 		// Check args meet expectations
 		if ((txGroupId != null && involving != null && !involving.isEmpty())
 				|| (txGroupId == null && (involving == null || involving.size() != 2)))
@@ -33,13 +42,23 @@ public class HSQLDBChatRepository implements ChatRepository {
 
 		StringBuilder sql = new StringBuilder(1024);
 
+		String tableName;
+
+		// if the PrimaryTable is available, then use it
+		if( this.repository.getBlockRepository().getBlockchainHeight() > BlockChain.getInstance().getMultipleNamesPerAccountHeight()) {
+			tableName = "PrimaryNames";
+		}
+		else {
+			tableName = "Names";
+		}
+
 		sql.append("SELECT created_when, tx_group_id, Transactions.reference, creator, "
 				+ "sender, SenderNames.name, recipient, RecipientNames.name, "
-				+ "data, is_text, is_encrypted, signature "
+				+ "chat_reference, data, is_text, is_encrypted, signature "
 				+ "FROM ChatTransactions "
 				+ "JOIN Transactions USING (signature) "
-				+ "LEFT OUTER JOIN Names AS SenderNames ON SenderNames.owner = sender "
-				+ "LEFT OUTER JOIN Names AS RecipientNames ON RecipientNames.owner = recipient ");
+				+ "LEFT OUTER JOIN " + tableName + " AS SenderNames ON SenderNames.owner = sender "
+				+ "LEFT OUTER JOIN " + tableName + " AS RecipientNames ON RecipientNames.owner = recipient ");
 
 		// WHERE clauses
 
@@ -55,6 +74,28 @@ public class HSQLDBChatRepository implements ChatRepository {
 		if (after != null) {
 			whereClauses.add("created_when > ?");
 			bindParams.add(after);
+		}
+
+		if (referenceBytes != null) {
+			whereClauses.add("reference = ?");
+			bindParams.add(referenceBytes);
+		}
+
+		if (chatReferenceBytes != null) {
+			whereClauses.add("chat_reference = ?");
+			bindParams.add(chatReferenceBytes);
+		}
+
+		if (hasChatReference != null && hasChatReference) {
+			whereClauses.add("chat_reference IS NOT NULL");
+		}
+		else if (hasChatReference != null && !hasChatReference) {
+			whereClauses.add("chat_reference IS NULL");
+		}
+
+		if (senderAddress != null) {
+			whereClauses.add("sender = ?");
+			bindParams.add(senderAddress);
 		}
 
 		if (txGroupId != null) {
@@ -98,16 +139,28 @@ public class HSQLDBChatRepository implements ChatRepository {
 				String senderName = resultSet.getString(6);
 				String recipient = resultSet.getString(7);
 				String recipientName = resultSet.getString(8);
-				byte[] data = resultSet.getBytes(9);
-				boolean isText = resultSet.getBoolean(10);
-				boolean isEncrypted = resultSet.getBoolean(11);
-				byte[] signature = resultSet.getBytes(12);
+				byte[] chatReference = resultSet.getBytes(9);
+				byte[] data = resultSet.getBytes(10);
+				boolean isText = resultSet.getBoolean(11);
+				boolean isEncrypted = resultSet.getBoolean(12);
+				byte[] signature = resultSet.getBytes(13);
 
 				ChatMessage chatMessage = new ChatMessage(timestamp, groupId, reference, senderPublicKey, sender,
-						senderName, recipient, recipientName, data, isText, isEncrypted, signature);
+						senderName, recipient, recipientName, chatReference, encoding, data, isText, isEncrypted, signature);
 
 				chatMessages.add(chatMessage);
 			} while (resultSet.next());
+
+			// if this is a group chat, then ensure that the sender is in the group
+			if( txGroupId != null && txGroupId > 0 ) {
+				List<String> members
+					= this.repository.getGroupRepository()
+						.getGroupMembers(txGroupId).stream()
+						.map(GroupMemberData::getMember)
+						.collect(Collectors.toList());
+
+				chatMessages.removeIf( data -> !members.contains(data.getSender()) );
+			}
 
 			return chatMessages;
 		} catch (SQLException e) {
@@ -116,11 +169,22 @@ public class HSQLDBChatRepository implements ChatRepository {
 	}
 
 	@Override
-	public ChatMessage toChatMessage(ChatTransactionData chatTransactionData) throws DataException {
+	public ChatMessage toChatMessage(ChatTransactionData chatTransactionData, Encoding encoding) throws DataException {
+
+		String tableName;
+
+		// if the PrimaryTable is available, then use it
+		if( this.repository.getBlockRepository().getBlockchainHeight() > BlockChain.getInstance().getMultipleNamesPerAccountHeight()) {
+			tableName = "PrimaryNames";
+		}
+		else {
+			tableName = "Names";
+		}
+
 		String sql = "SELECT SenderNames.name, RecipientNames.name "
 				+ "FROM ChatTransactions "
-				+ "LEFT OUTER JOIN Names AS SenderNames ON SenderNames.owner = sender "
-				+ "LEFT OUTER JOIN Names AS RecipientNames ON RecipientNames.owner = recipient "
+				+ "LEFT OUTER JOIN " + tableName + " AS SenderNames ON SenderNames.owner = sender "
+				+ "LEFT OUTER JOIN " + tableName + " AS RecipientNames ON RecipientNames.owner = recipient "
 				+ "WHERE signature = ?";
 
 		try (ResultSet resultSet = this.repository.checkedExecute(sql, chatTransactionData.getSignature())) {
@@ -136,42 +200,62 @@ public class HSQLDBChatRepository implements ChatRepository {
 			byte[] senderPublicKey = chatTransactionData.getSenderPublicKey();
 			String sender = chatTransactionData.getSender();
 			String recipient = chatTransactionData.getRecipient();
+			byte[] chatReference = chatTransactionData.getChatReference();
 			byte[] data = chatTransactionData.getData();
 			boolean isText = chatTransactionData.getIsText();
 			boolean isEncrypted = chatTransactionData.getIsEncrypted();
 			byte[] signature = chatTransactionData.getSignature();
 
 			return new ChatMessage(timestamp, groupId, reference, senderPublicKey, sender,
-					senderName, recipient, recipientName, data, isText, isEncrypted, signature);
+					senderName, recipient, recipientName, chatReference, encoding, data,
+					isText, isEncrypted, signature);
 		} catch (SQLException e) {
 			throw new DataException("Unable to fetch convert chat transaction from repository", e);
 		}
 	}
 
 	@Override
-	public ActiveChats getActiveChats(String address) throws DataException {
-		List<GroupChat> groupChats = getActiveGroupChats(address);
-		List<DirectChat> directChats = getActiveDirectChats(address);
+	public ActiveChats getActiveChats(String address, Encoding encoding, Boolean hasChatReference) throws DataException {
+		List<GroupChat> groupChats = getActiveGroupChats(address, encoding, hasChatReference);
+		List<DirectChat> directChats = getActiveDirectChats(address, hasChatReference);
 
 		return new ActiveChats(groupChats, directChats);
 	}
+	
+	private List<GroupChat> getActiveGroupChats(String address, Encoding encoding, Boolean hasChatReference) throws DataException {
+		String tableName;
 
-	private List<GroupChat> getActiveGroupChats(String address) throws DataException {
+		// if the PrimaryTable is available, then use it
+		if( this.repository.getBlockRepository().getBlockchainHeight() > BlockChain.getInstance().getMultipleNamesPerAccountHeight()) {
+			tableName = "PrimaryNames";
+		}
+		else {
+			tableName = "Names";
+		}
+
 		// Find groups where address is a member and potential latest message details
-		String groupsSql = "SELECT group_id, group_name, latest_timestamp, sender, sender_name "
+		String groupsSql = "SELECT group_id, group_name, latest_timestamp, sender, sender_name, signature, data "
 				+ "FROM GroupMembers "
 				+ "JOIN Groups USING (group_id) "
 				+ "LEFT OUTER JOIN LATERAL("
-					+ "SELECT created_when AS latest_timestamp, sender, name AS sender_name "
+					+ "SELECT created_when AS latest_timestamp, sender, name AS sender_name, signature, data "
 					+ "FROM ChatTransactions "
 					+ "JOIN Transactions USING (signature) "
-					+ "LEFT OUTER JOIN Names AS SenderNames ON SenderNames.owner = sender "
+					+ "LEFT OUTER JOIN " + tableName + " AS SenderNames ON SenderNames.owner = sender "
 					// NOTE: We need to qualify "Groups.group_id" here to avoid "General error" bug in HSQLDB v2.5.0
-					+ "WHERE tx_group_id = Groups.group_id AND type = " + TransactionType.CHAT.value + " "
-					+ "ORDER BY created_when DESC "
+					+ "WHERE tx_group_id = Groups.group_id AND type = " + TransactionType.CHAT.value + " ";
+
+					if (hasChatReference != null) {
+						if (hasChatReference) {
+							groupsSql += "AND chat_reference IS NOT NULL ";
+						} else {
+							groupsSql += "AND chat_reference IS NULL ";
+						}
+					}
+					groupsSql += "ORDER BY created_when DESC "
 					+ "LIMIT 1"
-				+ ") AS LatestMessages ON TRUE "
-				+ "WHERE address = ?";
+					+ ") AS LatestMessages ON TRUE "
+					+ "WHERE address = ?";
 
 		List<GroupChat> groupChats = new ArrayList<>();
 		try (ResultSet resultSet = this.repository.checkedExecute(groupsSql, address)) {
@@ -186,8 +270,10 @@ public class HSQLDBChatRepository implements ChatRepository {
 
 					String sender = resultSet.getString(4);
 					String senderName = resultSet.getString(5);
+					byte[] signature = resultSet.getBytes(6);
+					byte[] data = resultSet.getBytes(7);
 
-					GroupChat groupChat = new GroupChat(groupId, groupName, timestamp, sender, senderName);
+					GroupChat groupChat = new GroupChat(groupId, groupName, timestamp, sender, senderName, signature, encoding, data);
 					groupChats.add(groupChat);
 				} while (resultSet.next());
 			}
@@ -196,28 +282,40 @@ public class HSQLDBChatRepository implements ChatRepository {
 		}
 
 		// We need different SQL to handle group-less chat
-		String grouplessSql = "SELECT created_when, sender, SenderNames.name "
+		String grouplessSql = "SELECT created_when, sender, SenderNames.name, signature, data "
 				+ "FROM ChatTransactions "
 				+ "JOIN Transactions USING (signature) "
-				+ "LEFT OUTER JOIN Names AS SenderNames ON SenderNames.owner = sender "
+				+ "LEFT OUTER JOIN " + tableName + " AS SenderNames ON SenderNames.owner = sender "
 				+ "WHERE tx_group_id = 0 "
-				+ "AND recipient IS NULL "
-				+ "ORDER BY created_when DESC "
+				+ "AND recipient IS NULL ";
+
+				if (hasChatReference != null) {
+					if (hasChatReference) {
+						grouplessSql += "AND chat_reference IS NOT NULL ";
+					} else {
+						grouplessSql += "AND chat_reference IS NULL ";
+					}
+				}
+				grouplessSql += "ORDER BY created_when DESC "
 				+ "LIMIT 1";
 
 		try (ResultSet resultSet = this.repository.checkedExecute(grouplessSql)) {
 			Long timestamp = null;
 			String sender = null;
 			String senderName = null;
+			byte[] signature = null;
+			byte[] data = null;
 
 			if (resultSet != null) {
 				// We found a recipient-less, group-less CHAT message, so report its details
 				timestamp = resultSet.getLong(1);
 				sender = resultSet.getString(2);
 				senderName = resultSet.getString(3);
+				signature = resultSet.getBytes(4);
+				data = resultSet.getBytes(5);
 			}
 
-			GroupChat groupChat = new GroupChat(0, null, timestamp, sender, senderName);
+			GroupChat groupChat = new GroupChat(0, null, timestamp, sender, senderName, signature, encoding, data);
 			groupChats.add(groupChat);
 		} catch (SQLException e) {
 			throw new DataException("Unable to fetch active group chats from repository", e);
@@ -226,7 +324,17 @@ public class HSQLDBChatRepository implements ChatRepository {
 		return groupChats;
 	}
 
-	private List<DirectChat> getActiveDirectChats(String address) throws DataException {
+	private List<DirectChat> getActiveDirectChats(String address, Boolean hasChatReference) throws DataException {
+		String tableName;
+
+		// if the PrimaryTable is available, then use it
+		if( this.repository.getBlockRepository().getBlockchainHeight() > BlockChain.getInstance().getMultipleNamesPerAccountHeight()) {
+			tableName = "PrimaryNames";
+		}
+		else {
+			tableName = "Names";
+		}
+
 		// Find chat messages involving address
 		String directSql = "SELECT other_address, name, latest_timestamp, sender, sender_name "
 				+ "FROM ("
@@ -240,13 +348,23 @@ public class HSQLDBChatRepository implements ChatRepository {
 					+ "SELECT created_when AS latest_timestamp, sender, name AS sender_name "
 					+ "FROM ChatTransactions "
 					+ "NATURAL JOIN Transactions "
-					+ "LEFT OUTER JOIN Names AS SenderNames ON SenderNames.owner = sender "
+					+ "LEFT OUTER JOIN " + tableName + " AS SenderNames ON SenderNames.owner = sender "
 					+ "WHERE (sender = other_address AND recipient = ?) "
-					+ "OR (sender = ? AND recipient = other_address) "
-					+ "ORDER BY created_when DESC "
-					+ "LIMIT 1"
-				+ ") AS LatestMessages "
-				+ "LEFT OUTER JOIN Names ON owner = other_address";
+					+ "OR (sender = ? AND recipient = other_address) ";
+
+			    // Apply hasChatReference filter
+				if (hasChatReference != null) {
+					if (hasChatReference) {
+						directSql += "AND chat_reference IS NOT NULL ";
+					} else {
+						directSql += "AND chat_reference IS NULL ";
+					}
+				}
+			
+				directSql += "ORDER BY created_when DESC "
+						+ "LIMIT 1"
+						+ ") AS LatestMessages "
+						+ "LEFT OUTER JOIN " + tableName + " ON owner = other_address";
 
 		Object[] bindParams = new Object[] { address, address, address, address };
 

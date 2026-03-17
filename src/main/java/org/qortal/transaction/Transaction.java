@@ -1,15 +1,5 @@
 package org.qortal.transaction;
 
-import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.Predicate;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.qortal.account.Account;
@@ -18,6 +8,7 @@ import org.qortal.account.PublicKeyAccount;
 import org.qortal.asset.Asset;
 import org.qortal.block.BlockChain;
 import org.qortal.controller.Controller;
+import org.qortal.controller.TransactionImporter;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.block.BlockData;
 import org.qortal.data.group.GroupApprovalData;
@@ -30,14 +21,19 @@ import org.qortal.repository.GroupRepository;
 import org.qortal.repository.Repository;
 import org.qortal.settings.Settings;
 import org.qortal.transform.TransformationException;
+import org.qortal.transform.Transformer;
 import org.qortal.transform.transaction.TransactionTransformer;
 import org.qortal.utils.NTP;
 
-import static java.util.Arrays.stream;
-import static java.util.stream.Collectors.toMap;
-
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
+import java.math.BigInteger;
+import java.util.*;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Predicate;
+
+import static java.util.Arrays.stream;
+import static java.util.stream.Collectors.toMap;
 
 public abstract class Transaction {
 
@@ -67,13 +63,13 @@ public abstract class Transaction {
 		AT(21, false),
 		CREATE_GROUP(22, true),
 		UPDATE_GROUP(23, true),
-		ADD_GROUP_ADMIN(24, false),
-		REMOVE_GROUP_ADMIN(25, false),
-		GROUP_BAN(26, false),
-		CANCEL_GROUP_BAN(27, false),
-		GROUP_KICK(28, false),
-		GROUP_INVITE(29, false),
-		CANCEL_GROUP_INVITE(30, false),
+		ADD_GROUP_ADMIN(24, true),
+		REMOVE_GROUP_ADMIN(25, true),
+		GROUP_BAN(26, true),
+		CANCEL_GROUP_BAN(27, true),
+		GROUP_KICK(28, true),
+		GROUP_INVITE(29, true),
+		CANCEL_GROUP_INVITE(30, true),
 		JOIN_GROUP(31, false),
 		LEAVE_GROUP(32, false),
 		GROUP_APPROVAL(33, false),
@@ -83,7 +79,8 @@ public abstract class Transaction {
 		ENABLE_FORGING(37, false),
 		REWARD_SHARE(38, false),
 		ACCOUNT_LEVEL(39, false),
-		TRANSFER_PRIVS(40, false);
+		TRANSFER_PRIVS(40, false),
+		PRESENCE(41, false);
 
 		public final int value;
 		public final boolean needsApproval;
@@ -176,6 +173,7 @@ public abstract class Transaction {
 		INVALID_OPTION_LENGTH(20),
 		DUPLICATE_OPTION(21),
 		POLL_ALREADY_EXISTS(22),
+		POLL_ALREADY_HAS_VOTES(23),
 		POLL_DOES_NOT_EXIST(24),
 		POLL_OPTION_DOES_NOT_EXIST(25),
 		ALREADY_VOTED_FOR_THAT_OPTION(26),
@@ -225,6 +223,7 @@ public abstract class Transaction {
 		AT_IS_FINISHED(71),
 		NO_FLAG_PERMISSION(72),
 		NOT_MINTING_ACCOUNT(73),
+		REWARD_SHARE_UNKNOWN(76),
 		INVALID_REWARD_SHARE_PERCENT(77),
 		PUBLIC_KEY_UNKNOWN(78),
 		INVALID_PUBLIC_KEY(79),
@@ -243,8 +242,17 @@ public abstract class Transaction {
 		ACCOUNT_ALREADY_EXISTS(92),
 		INVALID_GROUP_BLOCK_DELAY(93),
 		INCORRECT_NONCE(94),
-		CHAT(999),
-		NOT_YET_RELEASED(1000);
+		INVALID_TIMESTAMP_SIGNATURE(95),
+		ADDRESS_BLOCKED(96),
+		NAME_BLOCKED(97),
+		GROUP_APPROVAL_REQUIRED(98),
+		ACCOUNT_NOT_TRANSFERABLE(99),
+		TRANSFER_PRIVS_DISABLED(100),
+		TEMPORARY_DISABLED(101),
+		GENERAL_TEMPORARY_DISABLED(102),
+		INVALID_BUT_OK(999),
+		NOT_YET_RELEASED(1000),
+		NOT_SUPPORTED(1001);
 
 		public final int value;
 
@@ -311,6 +319,10 @@ public abstract class Transaction {
 		return this.transactionData;
 	}
 
+	public void setRepository(Repository repository) {
+		this.repository = repository;
+	}
+
 	// More information
 
 	public static long getDeadline(TransactionData transactionData) {
@@ -324,7 +336,7 @@ public abstract class Transaction {
 
 	/** Returns whether transaction's fee is at least minimum unit fee as specified in blockchain config. */
 	public boolean hasMinimumFee() {
-		return this.transactionData.getFee() >= BlockChain.getInstance().getUnitFee();
+		return this.transactionData.getFee() >= this.getUnitFee(this.transactionData.getTimestamp());
 	}
 
 	public long feePerByte() {
@@ -337,9 +349,13 @@ public abstract class Transaction {
 
 	/** Returns whether transaction's fee is at least amount needed to cover byte-length of transaction. */
 	public boolean hasMinimumFeePerByte() {
-		long unitFee = BlockChain.getInstance().getUnitFee();
+		long unitFee = this.getUnitFee(this.transactionData.getTimestamp());
 		int maxBytePerUnitFee = BlockChain.getInstance().getMaxBytesPerUnitFee();
 
+		// If the unit fee is zero, any fee is enough to cover the byte-length of the transaction
+		if (unitFee == 0) {
+			return true;
+		}
 		return this.feePerByte() >= maxBytePerUnitFee / unitFee;
 	}
 
@@ -355,7 +371,18 @@ public abstract class Transaction {
 
 		int unitFeeCount = ((dataLength - 1) / maxBytePerUnitFee) + 1;
 
-		return BlockChain.getInstance().getUnitFee() * unitFeeCount;
+		return this.getUnitFee(this.transactionData.getTimestamp()) * unitFeeCount;
+	}
+
+	/**
+	 * Calculate unit fee for a given transaction type
+	 *
+	 * FUTURE: add "accountLevel" parameter if needed - the level of the transaction creator
+	 * @param timestamp - the transaction's timestamp (currently not used)
+	 * @return
+	 */
+	public long getUnitFee(Long timestamp) {
+		return BlockChain.getInstance().getUnitFeeAtTimestamp(timestamp);
 	}
 
 	/**
@@ -368,6 +395,12 @@ public abstract class Transaction {
 	 * @return transaction version number
 	 */
 	public static int getVersionByTimestamp(long timestamp) {
+		if (timestamp >= BlockChain.getInstance().getTransactionV6Timestamp()) {
+			return 6;
+		}
+		else if (timestamp >= BlockChain.getInstance().getTransactionV5Timestamp()) {
+			return 5;
+		}
 		return 4;
 	}
 
@@ -502,11 +535,6 @@ public abstract class Transaction {
 		if (now >= this.getDeadline())
 			return ValidationResult.TIMESTAMP_TOO_OLD;
 
-		// Transactions with a expiry prior to latest block's timestamp are too old
-		BlockData latestBlock = repository.getBlockRepository().getLastBlock();
-		if (this.getDeadline() <= latestBlock.getTimestamp())
-			return ValidationResult.TIMESTAMP_TOO_OLD;
-
 		// Transactions with a timestamp too far into future are too new
 		long maxTimestamp = now + Settings.getInstance().getMaxTransactionTimestampFuture();
 		if (this.transactionData.getTimestamp() > maxTimestamp)
@@ -517,6 +545,15 @@ public abstract class Transaction {
 		if (feeValidationResult != ValidationResult.OK)
 			return feeValidationResult;
 
+		if (Settings.getInstance().isLite()) {
+			// Everything from this point is difficult to validate for a lite node, since it has no blocks.
+			// For now, we will assume it is valid, to allow it to move around the network easily.
+			// If it turns out to be invalid, other full/top-only nodes will reject it on receipt.
+			// Lite nodes would never mint a block, so there's not much risk of holding invalid transactions.
+			// TODO: implement lite-only validation for each transaction type
+			return ValidationResult.OK;
+		}
+
 		PublicKeyAccount creator = this.getCreator();
 		if (creator == null)
 			return ValidationResult.MISSING_CREATOR;
@@ -524,6 +561,12 @@ public abstract class Transaction {
 		// Reject if unconfirmed pile already has X transactions from same creator
 		if (countUnconfirmedByCreator(creator) >= Settings.getInstance().getMaxUnconfirmedPerAccount())
 			return ValidationResult.TOO_MANY_UNCONFIRMED;
+
+		// Transactions with a expiry prior to latest block's timestamp are too old
+		// Not relevant for lite nodes, as they don't have any blocks
+		BlockData latestBlock = repository.getBlockRepository().getLastBlock();
+		if (this.getDeadline() <= latestBlock.getTimestamp())
+			return ValidationResult.TIMESTAMP_TOO_OLD;
 
 		// Check transaction's txGroupId
 		if (!this.isValidTxGroupId())
@@ -579,7 +622,10 @@ public abstract class Transaction {
 	}
 
 	private int countUnconfirmedByCreator(PublicKeyAccount creator) throws DataException {
-		List<TransactionData> unconfirmedTransactions = repository.getTransactionRepository().getUnconfirmedTransactions();
+		List<TransactionData> unconfirmedTransactions = TransactionImporter.getInstance().unconfirmedTransactionsCache;
+		if (unconfirmedTransactions == null) {
+			unconfirmedTransactions = repository.getTransactionRepository().getUnconfirmedTransactions();
+		}
 
 		// We exclude CHAT transactions as they never get included into blocks and
 		// have spam/DoS prevention by requiring proof of work
@@ -594,7 +640,7 @@ public abstract class Transaction {
 	}
 
 	/**
-	 * Returns sorted, unconfirmed transactions, excluding invalid.
+	 * Returns sorted, unconfirmed transactions, excluding invalid and unconfirmable.
 	 * 
 	 * @return sorted, unconfirmed transactions
 	 * @throws DataException
@@ -602,7 +648,8 @@ public abstract class Transaction {
 	public static List<TransactionData> getUnconfirmedTransactions(Repository repository) throws DataException {
 		BlockData latestBlockData = repository.getBlockRepository().getLastBlock();
 
-		List<TransactionData> unconfirmedTransactions = repository.getTransactionRepository().getUnconfirmedTransactions();
+		EnumSet<TransactionType> excludedTxTypes = EnumSet.of(TransactionType.CHAT, TransactionType.PRESENCE);
+		List<TransactionData> unconfirmedTransactions = repository.getTransactionRepository().getUnconfirmedTransactions(excludedTxTypes, null);
 
 		unconfirmedTransactions.sort(getDataComparator());
 
@@ -611,7 +658,8 @@ public abstract class Transaction {
 			TransactionData transactionData = unconfirmedTransactionsIterator.next();
 			Transaction transaction = Transaction.fromData(repository, transactionData);
 
-			if (transaction.isStillValidUnconfirmed(latestBlockData.getTimestamp()) != ValidationResult.OK)
+			// Must be confirmable and valid
+			if (!transaction.isConfirmable() || transaction.isStillValidUnconfirmed(latestBlockData.getTimestamp()) != ValidationResult.OK)
 				unconfirmedTransactionsIterator.remove();
 		}
 
@@ -717,9 +765,13 @@ public abstract class Transaction {
 			// Group no longer exists? Possibly due to blockchain orphaning undoing group creation?
 			return true; // stops tx being included in block but it will eventually expire
 
+		String groupOwner = this.repository.getGroupRepository().getOwner(txGroupId);
+		boolean groupOwnedByNullAccount = Objects.equals(groupOwner, Group.NULL_OWNER_ADDRESS);
+
 		// If transaction's creator is group admin (of group with ID txGroupId) then auto-approve
+		// This is disabled for null-owned groups, since these require approval from other admins
 		PublicKeyAccount creator = this.getCreator();
-		if (groupRepository.adminExists(txGroupId, creator.getAddress()))
+		if (!groupOwnedByNullAccount && groupRepository.adminExists(txGroupId, creator.getAddress()))
 			return false;
 
 		return true;
@@ -762,15 +814,20 @@ public abstract class Transaction {
 	/**
 	 * Import into our repository as a new, unconfirmed transaction.
 	 * <p>
-	 * Calls <tt>repository.saveChanges()</tt>
+	 * @implSpec <i>blocks</i> to obtain blockchain lock
+	 * <p>
+	 * If transaction is valid, then:
+	 * <ul>
+	 * <li>calls {@link Repository#discardChanges()}</li>
+	 * <li>calls {@link Controller#onNewTransaction(TransactionData, Peer)}</li>
+	 * </ul>
 	 * 
 	 * @throws DataException
 	 */
 	public ValidationResult importAsUnconfirmed() throws DataException {
 		// Attempt to acquire blockchain lock
 		ReentrantLock blockchainLock = Controller.getInstance().getBlockchainLock();
-		if (!blockchainLock.tryLock())
-			return ValidationResult.NO_BLOCKCHAIN_LOCK;
+		blockchainLock.lock();
 
 		try {
 			// Check transaction doesn't already exist
@@ -779,6 +836,8 @@ public abstract class Transaction {
 
 			// Fix up approval status
 			this.setInitialApprovalStatus();
+
+			this.preProcess();
 
 			ValidationResult validationResult = this.isValidUnconfirmed();
 			if (validationResult != ValidationResult.OK)
@@ -797,20 +856,65 @@ public abstract class Transaction {
 			repository.getTransactionRepository().save(transactionData);
 			repository.getTransactionRepository().unconfirmTransaction(transactionData);
 
-			/*
-			 * If CHAT transaction then ensure there's at least a skeleton account so people
-			 * can retrieve sender's public key using address, even if all their messages
-			 * expire.
-			 */
-			if (transactionData.getType() == TransactionType.CHAT)
-				this.getCreator().ensureAccount();
+			this.onImportAsUnconfirmed();
 
 			repository.saveChanges();
 
+			// Notify controller of new transaction
+			Controller.getInstance().onNewTransaction(transactionData);
+
 			return ValidationResult.OK;
 		} finally {
+			/*
+			 * We call discardChanges() to restart repository 'transaction', discarding any
+			 * transactional table locks, hence reducing possibility of deadlock or
+			 * "serialization failure" with HSQLDB due to reads.
+			 * 
+			 * "Serialization failure" most likely caused by existing transaction check above,
+			 * where multiple threads are importing transactions
+			 * and one thread finds existing an transaction, returns (unlocking blockchain lock),
+			 * then another thread immediately obtains lock, tries to delete above existing transaction
+			 * (e.g. older PRESENCE transaction) but can't because first thread's repository
+			 * session still has row-lock on existing transaction and hasn't yet closed
+			 * repository session. Deadlock caused by race condition.
+			 * 
+			 * Hence we clear any repository-based locks before releasing blockchain lock.
+			 */
+			repository.discardChanges();
+
 			blockchainLock.unlock();
 		}
+	}
+
+	/**
+	 * Callback for when a transaction is imported as unconfirmed.
+	 * <p>
+	 * Called after transaction is added to repository, but before commit.
+	 * <p>
+	 * Blockchain lock is being held during this time.
+	 */
+	protected void onImportAsUnconfirmed() throws DataException {
+		/* To be optionally overridden */
+	}
+
+	/**
+	 * Returns whether transaction is 'confirmable' - i.e. is of a type that
+	 * can be included in a block. Some transactions are 'unconfirmable'
+	 * and therefore must remain in the mempool until they expire.
+	 * @return
+	 */
+	public boolean isConfirmable() {
+		/* To be optionally overridden */
+		return true;
+	}
+
+	/**
+	 * Returns whether transaction is confirmable in a block at a given height.
+	 * @return
+	 */
+	public boolean isConfirmableAtHeight(int height) {
+		/* To be optionally overridden */
+		return true;
 	}
 
 	/**
@@ -831,6 +935,13 @@ public abstract class Transaction {
 	 * @throws DataException
 	 */
 	public boolean hasValidReference() throws DataException {
+		// Disable reference checking after feature trigger timestamp
+		if (this.transactionData.getTimestamp() >= BlockChain.getInstance().getDisableReferenceTimestamp()) {
+			// Allow any value as long as it is the correct length
+			return this.transactionData.getReference() != null &&
+					this.transactionData.getReference().length == Transformer.SIGNATURE_LENGTH;
+		}
+
 		Account creator = getCreator();
 
 		return Arrays.equals(transactionData.getReference(), creator.getLastReference());
@@ -854,6 +965,14 @@ public abstract class Transaction {
 	public ValidationResult isProcessable() throws DataException {
 		return ValidationResult.OK;
 	}
+
+	/**
+	 * * Pre-process a transaction before validating or processing the block
+	 * This allows for any database integrity checks prior to validation.
+	 *
+	 * @throws DataException
+	 */
+	public abstract void preProcess() throws DataException;
 
 	/**
 	 * Actually process a transaction, updating the blockchain.

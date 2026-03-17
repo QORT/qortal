@@ -1,5 +1,6 @@
 package org.qortal.api.resource;
 
+import com.google.common.primitives.Bytes;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
@@ -7,19 +8,8 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
-
-import java.util.List;
-
-import javax.servlet.http.HttpServletRequest;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.MediaType;
-
 import org.qortal.api.ApiError;
 import org.qortal.api.ApiErrors;
 import org.qortal.api.ApiExceptionFactory;
@@ -41,7 +31,13 @@ import org.qortal.transform.transaction.ChatTransactionTransformer;
 import org.qortal.transform.transaction.TransactionTransformer;
 import org.qortal.utils.Base58;
 
-import com.google.common.primitives.Bytes;
+import javax.servlet.http.HttpServletRequest;
+import javax.ws.rs.*;
+import javax.ws.rs.core.Context;
+import javax.ws.rs.core.MediaType;
+import java.util.List;
+
+import static org.qortal.data.chat.ChatMessage.Encoding;
 
 @Path("/chat")
 @Tag(name = "Chat")
@@ -72,6 +68,11 @@ public class ChatResource {
 	public List<ChatMessage> searchChat(@QueryParam("before") Long before, @QueryParam("after") Long after,
 			@QueryParam("txGroupId") Integer txGroupId,
 			@QueryParam("involving") List<String> involvingAddresses,
+			@QueryParam("reference") String reference,
+			@QueryParam("chatreference") String chatReference,
+			@QueryParam("haschatreference") Boolean hasChatReference,
+			@QueryParam("sender") String sender,
+			@QueryParam("encoding") Encoding encoding,
 			@Parameter(ref = "limit") @QueryParam("limit") Integer limit,
 			@Parameter(ref = "offset") @QueryParam("offset") Integer offset,
 			@Parameter(ref = "reverse") @QueryParam("reverse") Boolean reverse) {
@@ -90,13 +91,127 @@ public class ChatResource {
 		if (after != null && after < 1500000000000L)
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_CRITERIA);
 
+		byte[] referenceBytes = null;
+		if (reference != null)
+			referenceBytes = Base58.decode(reference);
+
+		byte[] chatReferenceBytes = null;
+		if (chatReference != null)
+			chatReferenceBytes = Base58.decode(chatReference);
+
 		try (final Repository repository = RepositoryManager.getRepository()) {
 			return repository.getChatRepository().getMessagesMatchingCriteria(
 					before,
 					after,
 					txGroupId,
+					referenceBytes,
+					chatReferenceBytes,
+					hasChatReference,
 					involvingAddresses,
+					sender,
+					encoding,
 					limit, offset, reverse);
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
+	@GET
+	@Path("/messages/count")
+	@Operation(
+			summary = "Count chat messages",
+			description = "Returns count of CHAT messages that match criteria. Must provide EITHER 'txGroupId' OR two 'involving' addresses.",
+			responses = {
+					@ApiResponse(
+							description = "count of messages",
+							content = @Content(
+									mediaType = MediaType.TEXT_PLAIN,
+									schema = @Schema(
+											type = "integer"
+									)
+							)
+					)
+			}
+	)
+	@ApiErrors({ApiError.INVALID_CRITERIA, ApiError.INVALID_ADDRESS, ApiError.REPOSITORY_ISSUE})
+	public int countChatMessages(@QueryParam("before") Long before, @QueryParam("after") Long after,
+										@QueryParam("txGroupId") Integer txGroupId,
+										@QueryParam("involving") List<String> involvingAddresses,
+										@QueryParam("reference") String reference,
+										@QueryParam("chatreference") String chatReference,
+										@QueryParam("haschatreference") Boolean hasChatReference,
+										@QueryParam("sender") String sender,
+										@QueryParam("encoding") Encoding encoding,
+										@Parameter(ref = "limit") @QueryParam("limit") Integer limit,
+										@Parameter(ref = "offset") @QueryParam("offset") Integer offset,
+										@Parameter(ref = "reverse") @QueryParam("reverse") Boolean reverse) {
+		// Check args meet expectations
+		if ((txGroupId == null && involvingAddresses.size() != 2)
+				|| (txGroupId != null && !involvingAddresses.isEmpty()))
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_CRITERIA);
+
+		// Check any provided addresses are valid
+		if (involvingAddresses.stream().anyMatch(address -> !Crypto.isValidAddress(address)))
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_ADDRESS);
+
+		if (before != null && before < 1500000000000L)
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_CRITERIA);
+
+		if (after != null && after < 1500000000000L)
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_CRITERIA);
+
+		byte[] referenceBytes = null;
+		if (reference != null)
+			referenceBytes = Base58.decode(reference);
+
+		byte[] chatReferenceBytes = null;
+		if (chatReference != null)
+			chatReferenceBytes = Base58.decode(chatReference);
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			return repository.getChatRepository().getMessagesMatchingCriteria(
+					before,
+					after,
+					txGroupId,
+					referenceBytes,
+					chatReferenceBytes,
+					hasChatReference,
+					involvingAddresses,
+					sender,
+					encoding,
+					limit, offset, reverse).size();
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
+	@GET
+	@Path("/message/{signature}")
+	@Operation(
+			summary = "Find chat message by signature",
+			responses = {
+					@ApiResponse(
+							description = "CHAT message",
+							content = @Content(
+										schema = @Schema(
+												implementation = ChatMessage.class
+										)
+							)
+					)
+			}
+	)
+	@ApiErrors({ApiError.INVALID_CRITERIA, ApiError.INVALID_ADDRESS, ApiError.REPOSITORY_ISSUE})
+	public ChatMessage getMessageBySignature(@PathParam("signature") String signature58, @QueryParam("encoding") Encoding encoding) {
+		byte[] signature = Base58.decode(signature58);
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			ChatTransactionData chatTransactionData = (ChatTransactionData) repository.getTransactionRepository().fromSignature(signature);
+			if (chatTransactionData == null) {
+				throw ApiExceptionFactory.INSTANCE.createCustomException(request, ApiError.INVALID_CRITERIA, "Message not found");
+			}
+
+			return repository.getChatRepository().toChatMessage(chatTransactionData, encoding);
 		} catch (DataException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
 		}
@@ -119,17 +234,21 @@ public class ChatResource {
 		}
 	)
 	@ApiErrors({ApiError.INVALID_CRITERIA, ApiError.INVALID_ADDRESS, ApiError.REPOSITORY_ISSUE})
-	public ActiveChats getActiveChats(@PathParam("address") String address) {
+	public ActiveChats getActiveChats(
+		@PathParam("address") String address,
+		@QueryParam("encoding") Encoding encoding,
+		@QueryParam("haschatreference") Boolean hasChatReference
+	) {
 		if (address == null || !Crypto.isValidAddress(address))
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_ADDRESS);
-
+	
 		try (final Repository repository = RepositoryManager.getRepository()) {
-			return repository.getChatRepository().getActiveChats(address);
+			return repository.getChatRepository().getActiveChats(address, encoding, hasChatReference);
 		} catch (DataException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
 		}
 	}
-
+	
 	@POST
 	@Operation(
 		summary = "Build raw, unsigned, CHAT transaction",
@@ -156,7 +275,8 @@ public class ChatResource {
 		}
 	)
 	@ApiErrors({ApiError.TRANSACTION_INVALID, ApiError.TRANSFORMATION_ERROR, ApiError.REPOSITORY_ISSUE})
-	public String buildChat(ChatTransactionData transactionData) {
+	@SecurityRequirement(name = "apiKey")
+	public String buildChat(@HeaderParam(Security.API_KEY_HEADER) String apiKey, ChatTransactionData transactionData) {
 		Security.checkApiCallAllowed(request);
 
 		try (final Repository repository = RepositoryManager.getRepository()) {
@@ -203,7 +323,8 @@ public class ChatResource {
 		}
 	)
 	@ApiErrors({ApiError.TRANSACTION_INVALID, ApiError.INVALID_DATA, ApiError.TRANSFORMATION_ERROR, ApiError.REPOSITORY_ISSUE})
-	public String buildChat(String rawBytes58) {
+	@SecurityRequirement(name = "apiKey")
+	public String buildChat(@HeaderParam(Security.API_KEY_HEADER) String apiKey, String rawBytes58) {
 		Security.checkApiCallAllowed(request);
 
 		try (final Repository repository = RepositoryManager.getRepository()) {

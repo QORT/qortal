@@ -1,10 +1,44 @@
 package org.qortal.crypto;
 
+import org.qortal.utils.NTP;
+
 import java.nio.ByteBuffer;
+import java.util.concurrent.TimeoutException;
 
 public class MemoryPoW {
 
+	/**
+	 * Compute a MemoryPoW nonce
+	 *
+	 * @param data
+	 * @param workBufferLength
+	 * @param difficulty
+	 * @return
+	 * @throws TimeoutException
+	 */
 	public static Integer compute2(byte[] data, int workBufferLength, long difficulty) {
+		try {
+			return MemoryPoW.compute2(data, workBufferLength, difficulty, null);
+
+		} catch (TimeoutException e) {
+			// This won't happen, because above timeout is null
+			return null;
+		}
+	}
+
+	/**
+	 * Compute a MemoryPoW nonce, with optional timeout
+	 *
+	 * @param data
+	 * @param workBufferLength
+	 * @param difficulty
+	 * @param timeout maximum number of milliseconds to compute for before giving up,<br>or null if no timeout
+	 * @return
+	 * @throws TimeoutException
+	 */
+	public static Integer compute2(byte[] data, int workBufferLength, long difficulty, Long timeout) throws TimeoutException {
+		long startTime = NTP.getTime();
+
 		// Hash data with SHA256
 		byte[] hash = Crypto.digest(data);
 
@@ -28,6 +62,17 @@ public class MemoryPoW {
 		long result = 0;
 		do {
 			++nonce;
+
+			// If we've been interrupted, exit fast with invalid value
+			if (Thread.currentThread().isInterrupted())
+				return -1;
+
+			if (timeout != null) {
+				long now = NTP.getTime();
+				if (now > startTime + timeout) {
+					throw new TimeoutException("Timeout reached");
+				}
+			}
 
 			seed *= seedMultiplier; // per nonce
 
@@ -54,6 +99,10 @@ public class MemoryPoW {
 	}
 
 	public static boolean verify2(byte[] data, int workBufferLength, long difficulty, int nonce) {
+		return verify2(data, null, workBufferLength, difficulty, nonce);
+	}
+
+	public static boolean verify2(byte[] data, long[] workBuffer, int workBufferLength, long difficulty, int nonce) {
 		// Hash data with SHA256
 		byte[] hash = Crypto.digest(data);
 
@@ -66,7 +115,10 @@ public class MemoryPoW {
 		byteBuffer = null;
 
 		int longBufferLength = workBufferLength / 8;
-		long[] workBuffer = new long[longBufferLength];
+
+		if (workBuffer == null)
+			workBuffer = new long[longBufferLength];
+
 		long[] state = new long[4];
 
 		long seed = 8682522807148012L;

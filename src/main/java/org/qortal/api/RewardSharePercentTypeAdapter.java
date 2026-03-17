@@ -1,8 +1,7 @@
 package org.qortal.api;
 
-import java.math.BigDecimal;
-
 import javax.xml.bind.annotation.adapters.XmlAdapter;
+import java.math.BigDecimal;
 
 public class RewardSharePercentTypeAdapter extends XmlAdapter<String, Integer> {
 

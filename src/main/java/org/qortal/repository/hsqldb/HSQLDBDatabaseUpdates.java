@@ -1,12 +1,17 @@
 package org.qortal.repository.hsqldb;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.qortal.controller.Controller;
+import org.qortal.controller.tradebot.BitcoinACCTv1TradeBot;
+import org.qortal.gui.SplashFrame;
+
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import java.util.Arrays;
+import java.util.stream.Collectors;
 
 public class HSQLDBDatabaseUpdates {
 
@@ -18,11 +23,21 @@ public class HSQLDBDatabaseUpdates {
 	/**
 	 * Apply any incremental changes to database schema.
 	 * 
+	 * @return true if database was non-existent/empty, false otherwise
 	 * @throws SQLException
 	 */
-	public static void updateDatabase(Connection connection) throws SQLException {
-		while (databaseUpdating(connection))
+	public static boolean updateDatabase(Connection connection) throws SQLException {
+		final boolean wasPristine = fetchDatabaseVersion(connection) == 0;
+
+		SplashFrame.getInstance().updateStatus("Upgrading database, please wait...");
+
+		while (databaseUpdating(connection, wasPristine))
 			incrementDatabaseVersion(connection);
+
+		String text = String.format("Starting Qortal Core v%s...", Controller.getInstance().getVersionStringWithoutPrefix());
+		SplashFrame.getInstance().updateStatus(text);
+
+		return wasPristine;
 	}
 
 	/**
@@ -40,23 +55,21 @@ public class HSQLDBDatabaseUpdates {
 	/**
 	 * Fetch current version of database schema.
 	 * 
-	 * @return int, 0 if no schema yet
+	 * @return database version, or 0 if no schema yet
 	 * @throws SQLException
 	 */
-	private static int fetchDatabaseVersion(Connection connection) throws SQLException {
-		int databaseVersion = 0;
-
+	public static int fetchDatabaseVersion(Connection connection) throws SQLException {
 		try (Statement stmt = connection.createStatement()) {
 			if (stmt.execute("SELECT version FROM DatabaseInfo"))
 				try (ResultSet resultSet = stmt.getResultSet()) {
 					if (resultSet.next())
-						databaseVersion = resultSet.getInt(1);
+						return resultSet.getInt(1);
 				}
 		} catch (SQLException e) {
 			// empty database
 		}
 
-		return databaseVersion;
+		return 0;
 	}
 
 	/**
@@ -65,7 +78,7 @@ public class HSQLDBDatabaseUpdates {
 	 * @return true - if a schema update happened, false otherwise
 	 * @throws SQLException
 	 */
-	private static boolean databaseUpdating(Connection connection) throws SQLException {
+	private static boolean databaseUpdating(Connection connection, boolean wasPristine) throws SQLException {
 		int databaseVersion = fetchDatabaseVersion(connection);
 
 		try (Statement stmt = connection.createStatement()) {
@@ -95,7 +108,6 @@ public class HSQLDBDatabaseUpdates {
 					stmt.execute("CREATE COLLATION SQL_TEXT_NO_PAD FOR SQL_TEXT FROM SQL_TEXT NO PAD");
 
 					stmt.execute("SET FILES SPACE TRUE"); // Enable per-table block space within .data file, useful for CACHED table types
-					stmt.execute("SET FILES LOB SCALE 1"); // LOB granularity is 1KB
 					// Slow down log fsync() calls from every 500ms to reduce I/O load
 					stmt.execute("SET FILES WRITE DELAY 5"); // only fsync() every 5 seconds
 
@@ -103,15 +115,15 @@ public class HSQLDBDatabaseUpdates {
 					stmt.execute("INSERT INTO DatabaseInfo VALUES ( 0 )");
 
 					stmt.execute("CREATE TYPE ArbitraryData AS VARBINARY(256)");
-					stmt.execute("CREATE TYPE AssetData AS CLOB(400K)");
+					stmt.execute("CREATE TYPE AssetData AS VARCHAR(400K)");
 					stmt.execute("CREATE TYPE AssetID AS BIGINT");
 					stmt.execute("CREATE TYPE AssetName AS VARCHAR(34) COLLATE SQL_TEXT_NO_PAD");
 					stmt.execute("CREATE TYPE AssetOrderID AS VARBINARY(64)");
-					stmt.execute("CREATE TYPE ATCode AS BLOB(64K)"); // 16bit * 1
-					stmt.execute("CREATE TYPE ATCreationBytes AS BLOB(576K)"); // 16bit * 1 + 16bit * 8
+					stmt.execute("CREATE TYPE ATCode AS VARBINARY(1024)"); // was: 16bit * 1
+					stmt.execute("CREATE TYPE ATCreationBytes AS VARBINARY(4096)"); // was: 16bit * 1 + 16bit * 8
 					stmt.execute("CREATE TYPE ATMessage AS VARBINARY(32)");
 					stmt.execute("CREATE TYPE ATName AS VARCHAR(32) COLLATE SQL_TEXT_UCC_NO_PAD");
-					stmt.execute("CREATE TYPE ATState AS BLOB(1M)"); // 16bit * 8 + 16bit * 4 + 16bit * 4
+					stmt.execute("CREATE TYPE ATState AS VARBINARY(1024)"); // was: 16bit * 8 + 16bit * 4 + 16bit * 4
 					stmt.execute("CREATE TYPE ATTags AS VARCHAR(80) COLLATE SQL_TEXT_UCC_NO_PAD");
 					stmt.execute("CREATE TYPE ATType AS VARCHAR(32) COLLATE SQL_TEXT_UCC_NO_PAD");
 					stmt.execute("CREATE TYPE ATStateHash as VARBINARY(32)");
@@ -142,7 +154,7 @@ public class HSQLDBDatabaseUpdates {
 							+ "transaction_count INTEGER NOT NULL, total_fees QortalAmount NOT NULL, transactions_signature Signature NOT NULL, "
 							+ "height INTEGER NOT NULL, minted_when EpochMillis NOT NULL, "
 							+ "minter QortalPublicKey NOT NULL, minter_signature Signature NOT NULL, AT_count INTEGER NOT NULL, AT_fees QortalAmount NOT NULL, "
-							+ "online_accounts BLOB(1M), online_accounts_count INTEGER NOT NULL, online_accounts_timestamp EpochMillis, online_accounts_signatures BLOB(1M), "
+							+ "online_accounts VARBINARY(1024), online_accounts_count INTEGER NOT NULL, online_accounts_timestamp EpochMillis, online_accounts_signatures VARBINARY(1M), "
 							+ "PRIMARY KEY (signature))");
 					// For finding blocks by height.
 					stmt.execute("CREATE INDEX BlockHeightIndex ON Blocks (height)");
@@ -154,16 +166,6 @@ public class HSQLDBDatabaseUpdates {
 					stmt.execute("CREATE INDEX BlockTimestampHeightIndex ON Blocks (minted_when, height)");
 					// Use a separate table space as this table will be very large.
 					stmt.execute("SET TABLE Blocks NEW SPACE");
-
-					// Table to hold next block height.
-					stmt.execute("CREATE TABLE NextBlockHeight (height INT NOT NULL)");
-					// Initial value - should work for empty DB or populated DB.
-					stmt.execute("INSERT INTO NextBlockHeight VALUES (SELECT IFNULL(MAX(height), 0) + 1 FROM Blocks)");
-					// We use triggers on Blocks to update a simple "next block height" table
-					String blockUpdateSql = "UPDATE NextBlockHeight SET height = (SELECT height + 1 FROM Blocks ORDER BY height DESC LIMIT 1)";
-					stmt.execute("CREATE TRIGGER Next_block_height_insert_trigger AFTER INSERT ON Blocks " + blockUpdateSql);
-					stmt.execute("CREATE TRIGGER Next_block_height_update_trigger AFTER UPDATE ON Blocks " + blockUpdateSql);
-					stmt.execute("CREATE TRIGGER Next_block_height_delete_trigger AFTER DELETE ON Blocks " + blockUpdateSql);
 					break;
 
 				case 2:
@@ -223,6 +225,8 @@ public class HSQLDBDatabaseUpdates {
 							+ "PRIMARY KEY (account))");
 					// For looking up an account by public key
 					stmt.execute("CREATE INDEX AccountPublicKeyIndex on Accounts (public_key)");
+					// Use a separate table space as this table will be very large.
+					stmt.execute("SET TABLE Accounts NEW SPACE");
 
 					// Account balances
 					stmt.execute("CREATE TABLE AccountBalances (account QortalAddress, asset_id AssetID, balance QortalAmount NOT NULL, "
@@ -231,6 +235,8 @@ public class HSQLDBDatabaseUpdates {
 					stmt.execute("CREATE INDEX AccountBalancesAssetBalanceIndex ON AccountBalances (asset_id, balance)");
 					// Add CHECK constraint to account balances
 					stmt.execute("ALTER TABLE AccountBalances ADD CONSTRAINT CheckBalanceNotNegative CHECK (balance >= 0)");
+					// Use a separate table space as this table will be very large.
+					stmt.execute("SET TABLE AccountBalances NEW SPACE");
 
 					// Keeping track of QORT gained from holding legacy QORA
 					stmt.execute("CREATE TABLE AccountQortFromQoraInfo (account QortalAddress, final_qort_from_qora QortalAmount, final_block_height INT, "
@@ -280,7 +286,6 @@ public class HSQLDBDatabaseUpdates {
 							+ "service SMALLINT NOT NULL, is_data_raw BOOLEAN NOT NULL, data ArbitraryData NOT NULL, "
 							+ TRANSACTION_KEYS + ")");
 					// NB: Actual data payload stored elsewhere
-					// For the future: data payload should be encrypted, at the very least with transaction's reference as the seed for the encryption key
 					break;
 
 				case 8:
@@ -428,6 +433,8 @@ public class HSQLDBDatabaseUpdates {
 							+ "PRIMARY KEY (AT_address, height), FOREIGN KEY (AT_address) REFERENCES ATs (AT_address) ON DELETE CASCADE)");
 					// For finding per-block AT states, ordered by creation timestamp
 					stmt.execute("CREATE INDEX BlockATStateIndex on ATStates (height, created_when)");
+					// Use a separate table space as this table will be very large.
+					stmt.execute("SET TABLE ATStates NEW SPACE");
 
 					// Deploy CIYAM AT Transactions
 					stmt.execute("CREATE TABLE DeployATTransactions (signature Signature, creator QortalPublicKey NOT NULL, AT_name ATName NOT NULL, "
@@ -447,40 +454,41 @@ public class HSQLDBDatabaseUpdates {
 
 				case 12:
 					// Groups
-					stmt.execute("CREATE TABLE Groups (group_id GroupID, owner QortalAddress NOT NULL, group_name GroupName NOT NULL, "
+					// NOTE: We need to set Groups to `GROUPS` here to avoid SQL Standard Keywords in HSQLDB v2.7.4
+					stmt.execute("CREATE TABLE `GROUPS` (group_id GroupID, owner QortalAddress NOT NULL, group_name GroupName NOT NULL, "
 							+ "created_when EpochMillis NOT NULL, updated_when EpochMillis, is_open BOOLEAN NOT NULL, "
 							+ "approval_threshold TINYINT NOT NULL, min_block_delay INTEGER NOT NULL, max_block_delay INTEGER NOT NULL, "
 							+ "reference Signature, creation_group_id GroupID, reduced_group_name GroupName NOT NULL, "
 							+ "description GenericDescription NOT NULL, PRIMARY KEY (group_id))");
 					// For finding groups by name
-					stmt.execute("CREATE INDEX GroupNameIndex on Groups (group_name)");
+					stmt.execute("CREATE INDEX GroupNameIndex on `GROUPS` (group_name)");
 					// For finding groups by reduced name
-					stmt.execute("CREATE INDEX GroupReducedNameIndex on Groups (reduced_group_name)");
+					stmt.execute("CREATE INDEX GroupReducedNameIndex on `GROUPS` (reduced_group_name)");
 					// For finding groups by owner
-					stmt.execute("CREATE INDEX GroupOwnerIndex ON Groups (owner)");
+					stmt.execute("CREATE INDEX GroupOwnerIndex ON `GROUPS` (owner)");
 
 					// We need a corresponding trigger to make sure new group_id values are assigned sequentially starting from 1
-					stmt.execute("CREATE TRIGGER Group_ID_Trigger BEFORE INSERT ON Groups "
+					stmt.execute("CREATE TRIGGER Group_ID_Trigger BEFORE INSERT ON `GROUPS` "
 							+ "REFERENCING NEW ROW AS new_row FOR EACH ROW WHEN (new_row.group_id IS NULL) "
-							+ "SET new_row.group_id = (SELECT IFNULL(MAX(group_id) + 1, 1) FROM Groups)");
+							+ "SET new_row.group_id = (SELECT IFNULL(MAX(group_id) + 1, 1) FROM `GROUPS`)");
 
 					// Admins
 					stmt.execute("CREATE TABLE GroupAdmins (group_id GroupID, admin QortalAddress, reference Signature NOT NULL, "
-							+ "PRIMARY KEY (group_id, admin), FOREIGN KEY (group_id) REFERENCES Groups (group_id) ON DELETE CASCADE)");
+							+ "PRIMARY KEY (group_id, admin), FOREIGN KEY (group_id) REFERENCES `GROUPS` (group_id) ON DELETE CASCADE)");
 					// For finding groups by admin address
 					stmt.execute("CREATE INDEX GroupAdminIndex ON GroupAdmins (admin)");
 
 					// Members
 					stmt.execute("CREATE TABLE GroupMembers (group_id GroupID, address QortalAddress, "
 							+ "joined_when EpochMillis NOT NULL, reference Signature NOT NULL, "
-							+ "PRIMARY KEY (group_id, address), FOREIGN KEY (group_id) REFERENCES Groups (group_id) ON DELETE CASCADE)");
+							+ "PRIMARY KEY (group_id, address), FOREIGN KEY (group_id) REFERENCES `GROUPS` (group_id) ON DELETE CASCADE)");
 					// For finding groups by member address
 					stmt.execute("CREATE INDEX GroupMemberIndex ON GroupMembers (address)");
 
 					// Invites
 					stmt.execute("CREATE TABLE GroupInvites (group_id GroupID, inviter QortalAddress, invitee QortalAddress, "
 							+ "expires_when EpochMillis, reference Signature, "
-							+ "PRIMARY KEY (group_id, invitee), FOREIGN KEY (group_id) REFERENCES Groups (group_id) ON DELETE CASCADE)");
+							+ "PRIMARY KEY (group_id, invitee), FOREIGN KEY (group_id) REFERENCES `GROUPS` (group_id) ON DELETE CASCADE)");
 					// For finding invites sent by inviter
 					stmt.execute("CREATE INDEX GroupInviteInviterIndex ON GroupInvites (inviter)");
 					// For finding invites by group
@@ -496,7 +504,7 @@ public class HSQLDBDatabaseUpdates {
 					// NULL expires_when means does not expire!
 					stmt.execute("CREATE TABLE GroupBans (group_id GroupID, offender QortalAddress, admin QortalAddress NOT NULL, "
 							+ "banned_when EpochMillis NOT NULL, reason GenericDescription NOT NULL, expires_when EpochMillis, reference Signature NOT NULL, "
-							+ "PRIMARY KEY (group_id, offender), FOREIGN KEY (group_id) REFERENCES Groups (group_id) ON DELETE CASCADE)");
+							+ "PRIMARY KEY (group_id, offender), FOREIGN KEY (group_id) REFERENCES `GROUPS` (group_id) ON DELETE CASCADE)");
 					// For expiry maintenance
 					stmt.execute("CREATE INDEX GroupBanExpiryIndex ON GroupBans (expires_when)");
 					break;
@@ -618,6 +626,449 @@ public class HSQLDBDatabaseUpdates {
 					stmt.execute("CREATE TABLE PublicizeTransactions (signature Signature, nonce INT NOT NULL, " + TRANSACTION_KEYS + ")");
 					break;
 
+				case 20:
+					// Trade bot
+					// See case 25 below for changes
+					stmt.execute("CREATE TABLE TradeBotStates (trade_private_key QortalKeySeed NOT NULL, trade_state TINYINT NOT NULL, "
+							+ "creator_address QortalAddress NOT NULL, at_address QortalAddress, updated_when BIGINT NOT NULL, qort_amount QortalAmount NOT NULL, "
+							+ "trade_native_public_key QortalPublicKey NOT NULL, trade_native_public_key_hash VARBINARY(32) NOT NULL, "
+							+ "trade_native_address QortalAddress NOT NULL, secret VARBINARY(32) NOT NULL, hash_of_secret VARBINARY(32) NOT NULL, "
+							+ "trade_foreign_public_key VARBINARY(33) NOT NULL, trade_foreign_public_key_hash VARBINARY(32) NOT NULL, "
+							+ "bitcoin_amount BIGINT NOT NULL, xprv58 VARCHAR(200), last_transaction_signature Signature, locktime_a BIGINT, "
+							+ "receiving_account_info VARBINARY(32) NOT NULL, PRIMARY KEY (trade_private_key))");
+					break;
+
+				case 21:
+					// AT functionality index
+					stmt.execute("CREATE INDEX IF NOT EXISTS ATCodeHashIndex ON ATs (code_hash, is_finished)");
+					break;
+
+				case 22:
+					// LOB downsizing
+					stmt.execute("ALTER TABLE Blocks ALTER COLUMN online_accounts VARBINARY(1024)");
+					stmt.execute("CHECKPOINT");
+					stmt.execute("ALTER TABLE Blocks ALTER COLUMN online_accounts_signatures VARBINARY(1048576)");
+					stmt.execute("CHECKPOINT");
+
+					stmt.execute("ALTER TABLE DeployATTransactions ALTER COLUMN creation_bytes VARBINARY(4096)");
+					stmt.execute("CHECKPOINT");
+
+					stmt.execute("ALTER TABLE ATs ALTER COLUMN code_bytes VARBINARY(1024)");
+					stmt.execute("CHECKPOINT");
+
+					stmt.execute("ALTER TABLE ATStates ALTER COLUMN state_data VARBINARY(1024)");
+					stmt.execute("CHECKPOINT");
+					break;
+
+				case 23:
+					// MESSAGE transactions index
+					stmt.execute("CREATE INDEX IF NOT EXISTS MessageTransactionsRecipientIndex ON MessageTransactions (recipient, sender)");
+					break;
+
+				case 24:
+					// Remove unused NextBlockHeight table and corresponding triggers
+					stmt.execute("DROP TRIGGER IF EXISTS Next_block_height_insert_trigger");
+					stmt.execute("DROP TRIGGER IF EXISTS Next_block_height_update_trigger");
+					stmt.execute("DROP TRIGGER IF EXISTS Next_block_height_delete_trigger");
+					stmt.execute("DROP TABLE IF EXISTS NextBlockHeight");
+					break;
+
+				case 25:
+					// DISABLED: improved version in case 30!
+					// Remove excess created_when from ATStates
+					// stmt.execute("ALTER TABLE ATStates DROP created_when");
+					// stmt.execute("CREATE INDEX ATStateHeightIndex on ATStates (height)");
+					break;
+
+				case 26:
+					// Support for trimming
+					stmt.execute("ALTER TABLE DatabaseInfo ADD AT_trim_height INT NOT NULL DEFAULT 0");
+					stmt.execute("ALTER TABLE DatabaseInfo ADD online_signatures_trim_height INT NOT NULL DEFAULT 0");
+					break;
+
+				case 27:
+					// More indexes
+					stmt.execute("CREATE INDEX IF NOT EXISTS PaymentTransactionsRecipientIndex ON PaymentTransactions (recipient)");
+					stmt.execute("CREATE INDEX IF NOT EXISTS ATTransactionsRecipientIndex ON ATTransactions (recipient)");
+					break;
+
+				case 28:
+					// Latest AT state cache
+					stmt.execute("CREATE TEMPORARY TABLE IF NOT EXISTS LatestATStates ("
+								+ "AT_address QortalAddress NOT NULL, "
+								+ "height INT NOT NULL"
+							+ ")");
+					break;
+
+				case 29:
+					// Turn off HSQLDB redo-log "blockchain.log" and periodically call "CHECKPOINT" ourselves
+					stmt.execute("SET FILES LOG FALSE");
+					stmt.execute("CHECKPOINT");
+					break;
+
+				case 30: {
+					// Split AT state data off to new table for better performance/management.
+
+					if (!wasPristine && !"mem".equals(HSQLDBRepository.getDbPathname(connection.getMetaData().getURL()))) {
+						// First, backup node-local data in case user wants to avoid long reshape and use bootstrap instead
+						try (ResultSet resultSet = stmt.executeQuery("SELECT COUNT(*) FROM MintingAccounts")) {
+							int rowCount = resultSet.next() ? resultSet.getInt(1) : 0;
+							if (rowCount > 0) {
+								stmt.execute("PERFORM EXPORT SCRIPT FOR TABLE MintingAccounts DATA TO 'MintingAccounts.script'");
+								LOGGER.info("Exported sensitive/node-local minting keys into MintingAccounts.script");
+							}
+						}
+
+						try (ResultSet resultSet = stmt.executeQuery("SELECT COUNT(*) FROM TradeBotStates")) {
+							int rowCount = resultSet.next() ? resultSet.getInt(1) : 0;
+							if (rowCount > 0) {
+								stmt.execute("PERFORM EXPORT SCRIPT FOR TABLE TradeBotStates DATA TO 'TradeBotStates.script'");
+								LOGGER.info("Exported sensitive/node-local trade-bot states into TradeBotStates.script");
+							}
+						}
+
+						LOGGER.info("If following reshape takes too long, use bootstrap and import node-local data using API's POST /admin/repository/data");
+					}
+
+					// Create new AT-states table without full state data
+					stmt.execute("CREATE TABLE ATStatesNew ("
+							+ "AT_address QortalAddress, height INTEGER NOT NULL, state_hash ATStateHash NOT NULL, "
+							+ "fees QortalAmount NOT NULL, is_initial BOOLEAN NOT NULL, "
+							+ "PRIMARY KEY (AT_address, height), "
+							+ "FOREIGN KEY (AT_address) REFERENCES ATs (AT_address) ON DELETE CASCADE)");
+					stmt.execute("SET TABLE ATStatesNew NEW SPACE");
+					stmt.execute("CHECKPOINT");
+
+					ResultSet resultSet = stmt.executeQuery("SELECT height FROM Blocks ORDER BY height DESC LIMIT 1");
+					final int blockchainHeight = resultSet.next() ? resultSet.getInt(1) : 0;
+					final int heightStep = 100;
+
+					LOGGER.info("Rebuilding AT state summaries in repository - this might take a while... (approx. 2 mins on high-spec)");
+					for (int minHeight = 1; minHeight < blockchainHeight; minHeight += heightStep) {
+						stmt.execute("INSERT INTO ATStatesNew ("
+								+ "SELECT AT_address, height, state_hash, fees, is_initial "
+								+ "FROM ATStates "
+								+ "WHERE height BETWEEN " + minHeight + " AND " + (minHeight + heightStep - 1)
+								+ ")");
+						stmt.execute("COMMIT");
+					}
+					stmt.execute("CHECKPOINT");
+
+					LOGGER.info("Rebuilding AT states height index in repository - this might take about 3x longer...");
+					stmt.execute("CREATE INDEX ATStatesHeightIndex ON ATStatesNew (height)");
+					stmt.execute("CHECKPOINT");
+
+					stmt.execute("CREATE TABLE ATStatesData ("
+							+ "AT_address QortalAddress, height INTEGER NOT NULL, state_data ATState NOT NULL, "
+							+ "PRIMARY KEY (height, AT_address), "
+							+ "FOREIGN KEY (AT_address) REFERENCES ATs (AT_address) ON DELETE CASCADE)");
+					stmt.execute("SET TABLE ATStatesData NEW SPACE");
+					stmt.execute("CHECKPOINT");
+
+					LOGGER.info("Rebuilding AT state data in repository - this might take a while... (approx. 2 mins on high-spec)");
+					for (int minHeight = 1; minHeight < blockchainHeight; minHeight += heightStep) {
+						stmt.execute("INSERT INTO ATStatesData ("
+								+ "SELECT AT_address, height, state_data "
+								+ "FROM ATstates "
+								+ "WHERE state_data IS NOT NULL "
+								+ "AND height BETWEEN " + minHeight + " AND " + (minHeight + heightStep - 1)
+								+ ")");
+						stmt.execute("COMMIT");
+					}
+					stmt.execute("CHECKPOINT");
+
+					stmt.execute("DROP TABLE ATStates");
+					stmt.execute("ALTER TABLE ATStatesNew RENAME TO ATStates");
+					stmt.execute("CHECKPOINT");
+					break;
+				}
+
+				case 31:
+					// Fix latest AT state cache which was previous created as TEMPORARY
+					stmt.execute("DROP TABLE IF EXISTS LatestATStates");
+					stmt.execute("CREATE TABLE IF NOT EXISTS LatestATStates ("
+								+ "AT_address QortalAddress NOT NULL, "
+								+ "height INT NOT NULL, PRIMARY KEY (height, AT_address))");
+					break;
+
+				case 32:
+					// Multiple blockchains, ACCTs and trade-bots
+					stmt.execute("ALTER TABLE TradeBotStates ADD COLUMN acct_name VARCHAR(40) BEFORE trade_state");
+					stmt.execute("UPDATE TradeBotStates SET acct_name = 'BitcoinACCTv1' WHERE acct_name IS NULL");
+					stmt.execute("ALTER TABLE TradeBotStates ALTER COLUMN acct_name SET NOT NULL");
+
+					stmt.execute("ALTER TABLE TradeBotStates ALTER COLUMN trade_state RENAME TO trade_state_value");
+
+					stmt.execute("ALTER TABLE TradeBotStates ADD COLUMN trade_state VARCHAR(40) BEFORE trade_state_value");
+					// Any existing values will be BitcoinACCTv1
+					StringBuilder updateTradeBotStatesSql = new StringBuilder(1024);
+					updateTradeBotStatesSql.append("UPDATE TradeBotStates SET (trade_state) = (")
+							.append("SELECT state_name FROM (VALUES ")
+							.append(
+									Arrays.stream(BitcoinACCTv1TradeBot.State.values())
+									.map(state -> String.format("(%d, '%s')", state.value, state.name()))
+									.collect(Collectors.joining(", ")))
+							.append(") AS BitcoinACCTv1States (state_value, state_name) ")
+							.append("WHERE state_value = trade_state_value)");
+					stmt.execute(updateTradeBotStatesSql.toString());
+					stmt.execute("ALTER TABLE TradeBotStates ALTER COLUMN trade_state SET NOT NULL");
+
+					stmt.execute("ALTER TABLE TradeBotStates ADD COLUMN foreign_blockchain VARCHAR(40) BEFORE trade_foreign_public_key");
+
+					stmt.execute("ALTER TABLE TradeBotStates ALTER COLUMN bitcoin_amount RENAME TO foreign_amount");
+
+					stmt.execute("ALTER TABLE TradeBotStates ALTER COLUMN xprv58 RENAME TO foreign_key");
+
+					stmt.execute("ALTER TABLE TradeBotStates ALTER COLUMN secret SET NULL");
+					stmt.execute("ALTER TABLE TradeBotStates ALTER COLUMN hash_of_secret SET NULL");
+					break;
+
+				case 33:
+					// PRESENCE transactions
+					stmt.execute("CREATE TABLE IF NOT EXISTS PresenceTransactions ("
+							+ "signature Signature, nonce INT NOT NULL, presence_type INT NOT NULL, "
+							+ "timestamp_signature Signature NOT NULL, " + TRANSACTION_KEYS + ")");
+					break;
+
+				case 34: {
+					// AT sleep-until-message support
+					LOGGER.info("Altering AT table in repository - this might take a while... (approx. 20 seconds on high-spec)");
+					stmt.execute("ALTER TABLE ATs ADD sleep_until_message_timestamp BIGINT");
+
+					// Create new AT-states table with new column
+					stmt.execute("CREATE TABLE ATStatesNew ("
+							+ "AT_address QortalAddress, height INTEGER NOT NULL, state_hash ATStateHash NOT NULL, "
+							+ "fees QortalAmount NOT NULL, is_initial BOOLEAN NOT NULL, sleep_until_message_timestamp BIGINT, "
+							+ "PRIMARY KEY (AT_address, height), "
+							+ "FOREIGN KEY (AT_address) REFERENCES ATs (AT_address) ON DELETE CASCADE)");
+					stmt.execute("SET TABLE ATStatesNew NEW SPACE");
+					stmt.execute("CHECKPOINT");
+
+					// Add the height index
+					LOGGER.info("Adding index to AT states table...");
+					stmt.execute("CREATE INDEX ATStatesNewHeightIndex ON ATStatesNew (height)");
+					stmt.execute("CHECKPOINT");
+
+					ResultSet resultSet = stmt.executeQuery("SELECT height FROM Blocks ORDER BY height DESC LIMIT 1");
+					final int blockchainHeight = resultSet.next() ? resultSet.getInt(1) : 0;
+					final int heightStep = 100;
+
+					LOGGER.info("Altering AT states table in repository - this might take a while... (approx. 3 mins on high-spec)");
+					for (int minHeight = 1; minHeight < blockchainHeight; minHeight += heightStep) {
+						stmt.execute("INSERT INTO ATStatesNew ("
+								+ "SELECT AT_address, height, state_hash, fees, is_initial, NULL "
+								+ "FROM ATStates "
+								+ "WHERE height BETWEEN " + minHeight + " AND " + (minHeight + heightStep - 1)
+								+ ")");
+						stmt.execute("COMMIT");
+
+						int processed = Math.min(minHeight + heightStep - 1, blockchainHeight);
+						double percentage = (double)processed / (double)blockchainHeight * 100.0f;
+						LOGGER.info(String.format("Processed %d of %d blocks (%.1f%%)", processed, blockchainHeight, percentage));
+					}
+					stmt.execute("CHECKPOINT");
+
+					stmt.execute("DROP TABLE ATStates");
+					stmt.execute("ALTER TABLE ATStatesNew RENAME TO ATStates");
+					stmt.execute("ALTER INDEX ATStatesNewHeightIndex RENAME TO ATStatesHeightIndex");
+					stmt.execute("CHECKPOINT");
+					break;
+				}
+				case 35:
+					// Support for pruning
+					stmt.execute("ALTER TABLE DatabaseInfo ADD AT_prune_height INT NOT NULL DEFAULT 0");
+					stmt.execute("ALTER TABLE DatabaseInfo ADD block_prune_height INT NOT NULL DEFAULT 0");
+					break;
+
+				case 36:
+					// Block archive support
+					stmt.execute("ALTER TABLE DatabaseInfo ADD block_archive_height INT NOT NULL DEFAULT 0");
+
+					// Block archive (lookup table to map signature to height)
+					// Actual data is stored in archive files outside of the database
+					stmt.execute("CREATE TABLE BlockArchive (signature BlockSignature, height INTEGER NOT NULL, "
+							+ "minted_when EpochMillis NOT NULL, minter QortalPublicKey NOT NULL, "
+							+ "PRIMARY KEY (signature))");
+					// For finding blocks by height.
+					stmt.execute("CREATE INDEX BlockArchiveHeightIndex ON BlockArchive (height)");
+					// For finding blocks by the account that minted them.
+					stmt.execute("CREATE INDEX BlockArchiveMinterIndex ON BlockArchive (minter)");
+					// For finding blocks by timestamp or finding height of latest block immediately before timestamp, etc.
+					stmt.execute("CREATE INDEX BlockArchiveTimestampHeightIndex ON BlockArchive (minted_when, height)");
+					// Use a separate table space as this table will be very large.
+					stmt.execute("SET TABLE BlockArchive NEW SPACE");
+					break;
+
+				case 37:
+					// ARBITRARY transaction updates for off-chain data storage
+
+					// We may want to use a nonce rather than a transaction fee for ARBITRARY transactions
+					stmt.execute("ALTER TABLE ArbitraryTransactions ADD nonce INT NOT NULL DEFAULT 0");
+					// We need to know the total size of the data file(s) associated with each transaction
+					stmt.execute("ALTER TABLE ArbitraryTransactions ADD size INT NOT NULL DEFAULT 0");
+					// Larger data files need to be split into chunks, for easier transmission and greater decentralization
+					// We store their hashes (and possibly other things) in a metadata file
+					stmt.execute("ALTER TABLE ArbitraryTransactions ADD metadata_hash VARBINARY(32)");
+					// For finding transactions by file hash
+					stmt.execute("CREATE INDEX ArbitraryDataIndex ON ArbitraryTransactions (is_data_raw, data)");
+					break;
+
+				case 38:
+					// We need the ability for arbitrary transactions to be associated with a name
+					stmt.execute("ALTER TABLE ArbitraryTransactions ADD name RegisteredName");
+					// A "method" specifies how the data should be applied (e.g. PUT or PATCH)
+					stmt.execute("ALTER TABLE ArbitraryTransactions ADD update_method INTEGER NOT NULL DEFAULT 0");
+					// For public data, the AES shared secret needs to be available. This is more for data obfuscation as apposed to actual encryption.
+					stmt.execute("ALTER TABLE ArbitraryTransactions ADD secret VARBINARY(32)");
+					// We want to support compressed and uncompressed data, as well as different compression algorithms
+					stmt.execute("ALTER TABLE ArbitraryTransactions ADD compression INTEGER NOT NULL DEFAULT 0");
+					// An optional identifier string can be used to allow more than one resource per user/service combo
+					stmt.execute("ALTER TABLE ArbitraryTransactions ADD identifier VARCHAR(64)");
+					// For finding transactions by registered name
+					stmt.execute("CREATE INDEX ArbitraryNameIndex ON ArbitraryTransactions (name)");
+					break;
+
+				case 39:
+					// Add DHT-style lookup table to track file locations
+					// This maps ARBITRARY transactions to peer addresses, but also includes additional metadata to
+					// track the local success rate and reachability. It is keyed by a "hash" column, to keep it
+					// generic, as this way we aren't limited to transaction signatures only.
+					// Multiple rows with the same hash are allowed, to allow for metadata. Longer term it could be
+					// reshaped to one row per hash if this is too verbose.
+					// Transaction signatures are hashed to 32 bytes using SHA256. In doing this we lose the ability
+					// to join against transaction tables, but on balance the space savings seem more important.
+					stmt.execute("CREATE TABLE ArbitraryPeers (hash VARBINARY(32) NOT NULL, "
+							+ "peer_address VARCHAR(255), successes INTEGER NOT NULL, failures INTEGER NOT NULL, "
+							+ "last_attempted EpochMillis NOT NULL, last_retrieved EpochMillis NOT NULL, "
+							+ "PRIMARY KEY (hash, peer_address))");
+
+					// For finding peers by data hash
+					stmt.execute("CREATE INDEX ArbitraryPeersHashIndex ON ArbitraryPeers (hash)");
+					break;
+
+				case 40:
+					// For looking up name registration transactions based on name or reduced name
+					stmt.execute("CREATE INDEX RegisterNameNameIndex ON RegisterNameTransactions (name)");
+					stmt.execute("CREATE INDEX RegisterNameReducedNameIndex ON RegisterNameTransactions (reduced_name)");
+					// For looking up update name transactions based on name, new name, or new reduced name
+					stmt.execute("CREATE INDEX UpdateNameNameIndex ON UpdateNameTransactions (name)");
+					stmt.execute("CREATE INDEX UpdateNameNewNameIndex ON UpdateNameTransactions (new_name)");
+					stmt.execute("CREATE INDEX UpdateNameReducedNewNameIndex ON UpdateNameTransactions (reduced_new_name)");
+					// For looking up buy name transactions based on name
+					stmt.execute("CREATE INDEX BuyNameNameIndex ON BuyNameTransactions (name)");
+					// For looking up sell name transactions based on name
+					stmt.execute("CREATE INDEX SellNameNameIndex ON SellNameTransactions (name)");
+					break;
+
+				case 41:
+					// Drop the ArbitraryPeers table as it's no longer needed
+					stmt.execute("DROP TABLE ArbitraryPeers");
+					break;
+
+				case 42:
+					// We need more space for online accounts
+					stmt.execute("ALTER TABLE Blocks ALTER COLUMN online_accounts SET DATA TYPE VARBINARY(10240)");
+					break;
+
+				case 43:
+					// Pirate Chain requires storing addresses that are 78 bytes long (69 bytes when decoded), so increase
+					// from 32 to 128 to give some padding for potentially even larger addresses in the future
+					stmt.execute("ALTER TABLE TradeBotStates ALTER COLUMN receiving_account_info SET DATA TYPE VARBINARY(128)");
+					break;
+
+				case 44:
+					// Add blocks minted penalty
+					stmt.execute("ALTER TABLE Accounts ADD blocks_minted_penalty INTEGER NOT NULL DEFAULT 0");
+					break;
+
+				case 45:
+					// Add a chat reference, to allow one message to reference another, and for this to be easily
+					// searchable. Null values are allowed as most transactions won't have a reference.
+					stmt.execute("ALTER TABLE ChatTransactions ADD chat_reference Signature");
+					// For finding chat messages by reference
+					stmt.execute("CREATE INDEX ChatTransactionsChatReferenceIndex ON ChatTransactions (chat_reference)");
+					break;
+
+				case 46:
+					// We need to track the sale price when canceling a name sale, so it can be put back when orphaned
+					stmt.execute("ALTER TABLE CancelSellNameTransactions ADD sale_price QortalAmount");
+					break;
+
+				case 47:
+					// Add `block_sequence` to the Transaction table, as the BlockTransactions table is pruned for
+					// older blocks and therefore the sequence becomes unavailable
+					LOGGER.info("Reshaping Transactions table - this can take a while...");
+					stmt.execute("ALTER TABLE Transactions ADD block_sequence INTEGER");
+
+					// For finding transactions by height and sequence
+					LOGGER.info("Adding index to Transactions table - this can take a while...");
+					stmt.execute("CREATE INDEX TransactionHeightSequenceIndex on Transactions (block_height, block_sequence)");
+					break;
+
+				case 48:
+					// We need to keep a local cache of arbitrary resources (items published to QDN), for easier searching.
+					// IMPORTANT: this is a cache of the last known state of a resource (both confirmed
+					// and valid unconfirmed). It cannot be assumed that all nodes will contain the same state at a
+					// given block height, and therefore must NOT be used for any consensus/validation code. It is
+					// simply a cache, to avoid having to query the raw transactions and the metadata in flat files
+					// when serving API requests.
+					// ARBITRARY transactions aren't really suitable for updating resources in the same way we'd update
+					// names or groups for instance, as there is no distinction between creations and updates, and metadata
+					// is off-chain. Plus, QDN allows (valid) unconfirmed data to be queried and viewed. It is very
+					// easy to keep a cache of the latest transaction's data, but anything more than that would need
+					// considerable thought (and most likely a rewrite).
+
+					stmt.execute("CREATE TABLE ArbitraryResourcesCache (service SMALLINT NOT NULL, "
+							+ "name RegisteredName NOT NULL, identifier VARCHAR(64), size INT NOT NULL, "
+							+ "status INTEGER DEFAULT 1, created_when EpochMillis NOT NULL, updated_when EpochMillis, "
+							+ "PRIMARY KEY (service, name, identifier))");
+					// For finding resources by service.
+					stmt.execute("CREATE INDEX ArbitraryResourcesServiceIndex ON ArbitraryResourcesCache (service)");
+					// For finding resources by name.
+					stmt.execute("CREATE INDEX ArbitraryResourcesNameIndex ON ArbitraryResourcesCache (name)");
+					// For finding resources by identifier.
+					stmt.execute("CREATE INDEX ArbitraryResourcesIdentifierIndex ON ArbitraryResourcesCache (identifier)");
+					// For finding resources by creation date (the default column when ordering).
+					stmt.execute("CREATE INDEX ArbitraryResourcesCreatedIndex ON ArbitraryResourcesCache (created_when)");
+					// Use a separate table space as this table will be very large.
+					stmt.execute("SET TABLE ArbitraryResourcesCache NEW SPACE");
+
+					stmt.execute("CREATE TABLE ArbitraryMetadataCache (service SMALLINT NOT NULL, "
+							+ "name RegisteredName NOT NULL, identifier VARCHAR(64), "
+							+ "title VARCHAR(80), description VARCHAR(240), category VARCHAR(64), "
+							+ "tag1 VARCHAR(20), tag2 VARCHAR(20), tag3 VARCHAR(20), tag4 VARCHAR(20), tag5 VARCHAR(20), "
+							+ "PRIMARY KEY (service, name, identifier), FOREIGN KEY (service, name, identifier) "
+							+ "REFERENCES ArbitraryResourcesCache (service, name, identifier) ON DELETE CASCADE)");
+					// For finding metadata by title.
+					stmt.execute("CREATE INDEX ArbitraryMetadataTitleIndex ON ArbitraryMetadataCache (title)");
+
+					// For finding arbitrary transactions by service
+					stmt.execute("CREATE INDEX ArbitraryServiceIndex ON ArbitraryTransactions (service)");
+					// For finding arbitrary transactions by identifier
+					stmt.execute("CREATE INDEX ArbitraryIdentifierIndex ON ArbitraryTransactions (identifier)");
+					break;
+
+				case 49:
+					// Update blocks minted penalty
+					stmt.execute("UPDATE Accounts SET blocks_minted_penalty = -5000000 WHERE blocks_minted_penalty < 0");
+					break;
+
+				case 50:
+					// Primary name for a Qortal Address, 0-1 for any address
+					stmt.execute("CREATE TABLE PrimaryNames (owner QortalAddress, name RegisteredName, "
+							+ "PRIMARY KEY (owner), FOREIGN KEY (name) REFERENCES Names (name) ON DELETE CASCADE)");
+					break;
+
+				case 51:
+
+					LOGGER.info("Adding signatures to arbitrary resources cache table - this can take a while...");
+					stmt.execute("ALTER TABLE ArbitraryResourcesCache ADD latest_signature Signature");
+					stmt.execute("ALTER TABLE ArbitraryResourcesCache ADD lower_case_name RegisteredName");
+					stmt.execute("CREATE INDEX ArbitraryResourcesServiceLowerNameIdIndex ON ArbitraryResourcesCache (service, lower_case_name, identifier)");
+					stmt.execute("ALTER TABLE DatabaseInfo ADD latest_signature_populated TINYINT NOT NULL DEFAULT 0");
+
+					break;
+
 				default:
 					// nothing to do
 					return false;
@@ -628,5 +1079,4 @@ public class HSQLDBDatabaseUpdates {
 		LOGGER.info(() -> String.format("HSQLDB repository updated to version %d", databaseVersion + 1));
 		return true;
 	}
-
 }

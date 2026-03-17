@@ -1,7 +1,7 @@
 package org.qortal.api.resource;
 
 import io.swagger.v3.core.converter.ModelConverters;
-import io.swagger.v3.jaxrs2.Reader;
+import io.swagger.v3.oas.integration.api.OpenApiReader; // Added for Swagger 2.1.13
 import io.swagger.v3.jaxrs2.ReaderListener;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
@@ -13,12 +13,6 @@ import io.swagger.v3.oas.models.media.MediaType;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.responses.ApiResponse;
-
-import java.lang.reflect.Method;
-import java.util.Locale;
-
-import javax.ws.rs.Path;
-
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.qortal.api.ApiError;
@@ -27,16 +21,20 @@ import org.qortal.api.ApiErrors;
 import org.qortal.api.ApiService;
 import org.qortal.globalization.Translator;
 
+import javax.ws.rs.Path;
+import java.lang.reflect.Method;
+import java.util.Locale;
+
 public class AnnotationPostProcessor implements ReaderListener {
 
 	private static final Logger LOGGER = LogManager.getLogger(AnnotationPostProcessor.class);
 
-	@Override
-	public void beforeScan(Reader reader, OpenAPI openAPI) {
+	@Override  // Updated for Swagger v2.1.13 
+	public void beforeScan(OpenApiReader reader, OpenAPI openAPI) {
 	}
 
-	@Override
-	public void afterScan(Reader reader, OpenAPI openAPI) {
+	@Override // Updated for Swagger v2.1.13
+	public void afterScan(OpenApiReader reader, OpenAPI openAPI) {
 		// Populate Components section with reusable parameters, like "limit" and "offset"
 		// We take the reusable parameters from AdminResource.globalParameters path "/admin/unused"
 		Components components = openAPI.getComponents();

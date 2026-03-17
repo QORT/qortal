@@ -11,15 +11,15 @@ public class PrivateKeyAccount extends PublicKeyAccount {
 	private final Ed25519PrivateKeyParameters edPrivateKeyParams;
 
 	/**
-	 * Create PrivateKeyAccount using byte[32] seed.
+	 * Create PrivateKeyAccount using byte[32] private key.
 	 * 
-	 * @param seed
+	 * @param privateKey
 	 *            byte[32] used to create private/public key pair
 	 * @throws IllegalArgumentException
-	 *             if passed invalid seed
+	 *             if passed invalid privateKey
 	 */
-	public PrivateKeyAccount(Repository repository, byte[] seed) {
-		this(repository, new Ed25519PrivateKeyParameters(seed, 0));
+	public PrivateKeyAccount(Repository repository, byte[] privateKey) {
+		this(repository, new Ed25519PrivateKeyParameters(privateKey, 0));
 	}
 
 	private PrivateKeyAccount(Repository repository, Ed25519PrivateKeyParameters edPrivateKeyParams) {
@@ -35,10 +35,6 @@ public class PrivateKeyAccount extends PublicKeyAccount {
 
 	public byte[] getPrivateKey() {
 		return this.privateKey;
-	}
-
-	public static byte[] toPublicKey(byte[] seed) {
-		return new Ed25519PrivateKeyParameters(seed, 0).generatePublicKey().getEncoded();
 	}
 
 	public byte[] sign(byte[] message) {

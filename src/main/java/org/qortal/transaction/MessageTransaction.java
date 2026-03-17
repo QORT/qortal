@@ -1,13 +1,10 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Random;
-
 import org.qortal.account.Account;
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.account.PublicKeyAccount;
 import org.qortal.asset.Asset;
+import org.qortal.block.BlockChain;
 import org.qortal.crypto.Crypto;
 import org.qortal.crypto.MemoryPoW;
 import org.qortal.data.PaymentData;
@@ -20,10 +17,15 @@ import org.qortal.repository.DataException;
 import org.qortal.repository.GroupRepository;
 import org.qortal.repository.Repository;
 import org.qortal.transform.TransformationException;
+import org.qortal.transform.Transformer;
 import org.qortal.transform.transaction.ChatTransactionTransformer;
 import org.qortal.transform.transaction.MessageTransactionTransformer;
 import org.qortal.transform.transaction.TransactionTransformer;
 import org.qortal.utils.NTP;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Random;
 
 public class MessageTransaction extends Transaction {
 
@@ -31,7 +33,9 @@ public class MessageTransaction extends Transaction {
 
 	public static final int MAX_DATA_SIZE = 4000;
 	public static final int POW_BUFFER_SIZE = 8 * 1024 * 1024; // bytes
-	public static final int POW_DIFFICULTY = 14; // leading zero bits
+	public static final int POW_DIFFICULTY_V1 = 14; // leading zero bits
+	public static final int POW_DIFFICULTY_V2_CONFIRMABLE = 16; // leading zero bits
+	public static final int POW_DIFFICULTY_V2_UNCONFIRMABLE = 12; // leading zero bits
 
 	// Properties
 
@@ -107,7 +111,17 @@ public class MessageTransaction extends Transaction {
 		MessageTransactionTransformer.clearNonce(transactionBytes);
 
 		// Calculate nonce
-		this.messageTransactionData.setNonce(MemoryPoW.compute2(transactionBytes, POW_BUFFER_SIZE, POW_DIFFICULTY));
+		this.messageTransactionData.setNonce(MemoryPoW.compute2(transactionBytes, POW_BUFFER_SIZE, getPoWDifficulty()));
+	}
+
+	public int getPoWDifficulty() {
+		// The difficulty changes at the "mempow transactions updates" timestamp
+		if (this.transactionData.getTimestamp() >= BlockChain.getInstance().getMemPoWTransactionUpdatesTimestamp()) {
+			// If this message is confirmable then require a higher difficulty
+			return this.isConfirmable() ? POW_DIFFICULTY_V2_CONFIRMABLE : POW_DIFFICULTY_V2_UNCONFIRMABLE;
+		}
+		// Before feature trigger timestamp, so use existing difficulty value
+		return POW_DIFFICULTY_V1;
 	}
 
 	/**
@@ -163,6 +177,14 @@ public class MessageTransaction extends Transaction {
 	@Override
 	public boolean hasValidReference() throws DataException {
 		// We shouldn't really get this far, but just in case:
+
+		// Disable reference checking after feature trigger timestamp
+		if (this.messageTransactionData.getTimestamp() >= BlockChain.getInstance().getDisableReferenceTimestamp()) {
+			// Allow any value as long as it is the correct length
+			return this.messageTransactionData.getReference() != null &&
+					this.messageTransactionData.getReference().length == Transformer.SIGNATURE_LENGTH;
+		}
+
 		if (this.messageTransactionData.getReference() == null)
 			return false;
 
@@ -171,6 +193,18 @@ public class MessageTransaction extends Transaction {
 			return true;
 
 		return super.hasValidReference();
+	}
+
+	@Override
+	public boolean isConfirmable() {
+		// After feature trigger timestamp, only messages to an AT address can confirm
+		if (this.transactionData.getTimestamp() >= BlockChain.getInstance().getMemPoWTransactionUpdatesTimestamp()) {
+			if (this.messageTransactionData.getRecipient() == null || !this.messageTransactionData.getRecipient().toUpperCase().startsWith("A")) {
+				// Message isn't to an AT address, so this transaction is unconfirmable
+				return false;
+			}
+		}
+		return true;
 	}
 
 	@Override
@@ -225,7 +259,7 @@ public class MessageTransaction extends Transaction {
 		MessageTransactionTransformer.clearNonce(transactionBytes);
 
 		// Check nonce
-		return MemoryPoW.verify2(transactionBytes, POW_BUFFER_SIZE, POW_DIFFICULTY, nonce);
+		return MemoryPoW.verify2(transactionBytes, POW_BUFFER_SIZE, getPoWDifficulty(), nonce);
 	}
 
 	@Override
@@ -240,7 +274,17 @@ public class MessageTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
 	public void process() throws DataException {
+		// Only certain MESSAGE transactions are able to confirm
+		if (!this.isConfirmable()) {
+			throw new DataException("Unconfirmable MESSAGE transactions should never be processed");
+		}
+
 		// If we have no amount then there's nothing to do
 		if (this.messageTransactionData.getAmount() == 0L)
 			return;
@@ -265,6 +309,11 @@ public class MessageTransaction extends Transaction {
 
 	@Override
 	public void orphan() throws DataException {
+		// Only certain MESSAGE transactions are able to confirm
+		if (!this.isConfirmable()) {
+			throw new DataException("Unconfirmable MESSAGE transactions should never be orphaned");
+		}
+
 		// If we have no amount then there's nothing to do
 		if (this.messageTransactionData.getAmount() == 0L)
 			return;

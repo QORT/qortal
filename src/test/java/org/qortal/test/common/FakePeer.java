@@ -1,13 +1,13 @@
 package org.qortal.test.common;
 
+import org.qortal.network.message.Message;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-
-import org.qortal.network.message.Message;
 
 public abstract class FakePeer implements Runnable {
 	private static final long DEFAULT_BROADCAST_INTERVAL = 60 * 1000;

@@ -1,7 +1,7 @@
 package org.qortal.test.apps;
-import org.qortal.crypto.BrokenMD160;
 
 import com.google.common.hash.HashCode;
+import org.qortal.crypto.BrokenMD160;
 
 @SuppressWarnings("deprecation")
 public class brokenmd160 {

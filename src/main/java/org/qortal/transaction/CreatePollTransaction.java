@@ -1,9 +1,6 @@
 package org.qortal.transaction;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-
+import com.google.common.base.Utf8;
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.crypto.Crypto;
@@ -15,7 +12,9 @@ import org.qortal.repository.Repository;
 import org.qortal.utils.Unicode;
 import org.qortal.voting.Poll;
 
-import com.google.common.base.Utf8;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 public class CreatePollTransaction extends Transaction {
 
@@ -104,6 +103,11 @@ public class CreatePollTransaction extends Transaction {
 			return ValidationResult.POLL_ALREADY_EXISTS;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

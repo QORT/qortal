@@ -1,13 +1,15 @@
 package org.qortal.repository;
 
-import java.util.List;
-
 import org.qortal.data.voting.PollData;
 import org.qortal.data.voting.VoteOnPollData;
+
+import java.util.List;
 
 public interface VotingRepository {
 
 	// Polls
+
+	public List<PollData> getAllPolls(Integer limit, Integer offset, Boolean reverse) throws DataException;
 
 	public PollData fromPollName(String pollName) throws DataException;
 

@@ -1,15 +1,13 @@
 package org.qortal.network.message;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.nio.ByteBuffer;
-
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
 import org.qortal.transform.Transformer;
 import org.qortal.transform.block.BlockTransformer;
 
-import com.google.common.primitives.Ints;
-import com.google.common.primitives.Longs;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class HeightV2Message extends Message {
 
@@ -19,7 +17,24 @@ public class HeightV2Message extends Message {
 	private byte[] minterPublicKey;
 
 	public HeightV2Message(int height, byte[] signature, long timestamp, byte[] minterPublicKey) {
-		this(-1, height, signature, timestamp, minterPublicKey);
+		super(MessageType.HEIGHT_V2);
+
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+
+		try {
+			bytes.write(Ints.toByteArray(height));
+
+			bytes.write(signature);
+
+			bytes.write(Longs.toByteArray(timestamp));
+
+			bytes.write(minterPublicKey);
+		} catch (IOException e) {
+			throw new AssertionError("IOException shouldn't occur with ByteArrayOutputStream");
+		}
+
+		this.dataBytes = bytes.toByteArray();
+		this.checksumBytes = Message.generateChecksum(this.dataBytes);
 	}
 
 	private HeightV2Message(int id, int height, byte[] signature, long timestamp, byte[] minterPublicKey) {
@@ -47,7 +62,7 @@ public class HeightV2Message extends Message {
 		return this.minterPublicKey;
 	}
 
-	public static Message fromByteBuffer(int id, ByteBuffer bytes) throws UnsupportedEncodingException {
+	public static Message fromByteBuffer(int id, ByteBuffer bytes) {
 		int height = bytes.getInt();
 
 		byte[] signature = new byte[BlockTransformer.BLOCK_SIGNATURE_LENGTH];
@@ -59,25 +74,6 @@ public class HeightV2Message extends Message {
 		bytes.get(minterPublicKey);
 
 		return new HeightV2Message(id, height, signature, timestamp, minterPublicKey);
-	}
-
-	@Override
-	protected byte[] toData() {
-		try {
-			ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-
-			bytes.write(Ints.toByteArray(this.height));
-
-			bytes.write(this.signature);
-
-			bytes.write(Longs.toByteArray(this.timestamp));
-
-			bytes.write(this.minterPublicKey);
-
-			return bytes.toByteArray();
-		} catch (IOException e) {
-			return null;
-		}
 	}
 
 }

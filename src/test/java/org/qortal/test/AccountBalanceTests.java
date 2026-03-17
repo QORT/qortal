@@ -1,14 +1,5 @@
 package org.qortal.test;
 
-import static org.junit.Assert.*;
-
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Random;
-import java.util.stream.Collectors;
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -17,13 +8,23 @@ import org.qortal.account.PublicKeyAccount;
 import org.qortal.asset.Asset;
 import org.qortal.data.account.AccountBalanceData;
 import org.qortal.data.account.AccountData;
+import org.qortal.repository.AccountRepository.BalanceOrdering;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.repository.RepositoryManager;
-import org.qortal.repository.AccountRepository.BalanceOrdering;
 import org.qortal.test.common.BlockUtils;
 import org.qortal.test.common.Common;
 import org.qortal.test.common.TestAccount;
+
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Random;
+import java.util.stream.Collectors;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class AccountBalanceTests extends Common {
 
@@ -169,6 +170,86 @@ public class AccountBalanceTests extends Common {
 
 		// Rebuild repository to avoid orphan check
 		Common.useDefaultSettings();
+	}
+
+	/** Test batch set/delete of account balances */
+	@Test
+	public void testBatchedBalanceChanges() throws DataException, SQLException {
+		Random random = new Random();
+		int ai;
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			System.out.println("Creating random accounts...");
+
+			// Generate some random accounts
+			List<Account> accounts = new ArrayList<>();
+			for (ai = 0; ai < 2000; ++ai) {
+				byte[] publicKey = new byte[32];
+				random.nextBytes(publicKey);
+
+				PublicKeyAccount account = new PublicKeyAccount(repository, publicKey);
+				accounts.add(account);
+			}
+
+			List<AccountBalanceData> accountBalances = new ArrayList<>();
+
+			System.out.println("Setting random balances...");
+
+			// Fill with lots of random balances
+			for (ai = 0; ai < accounts.size(); ++ai) {
+				Account account = accounts.get(ai);
+				int assetId = random.nextInt(2);
+				// random zero, or non-zero, balance
+				long balance = random.nextBoolean() ? 0L : random.nextInt(100000);
+
+				accountBalances.add(new AccountBalanceData(account.getAddress(), assetId, balance));
+			}
+
+			repository.getAccountRepository().setAssetBalances(accountBalances);
+			repository.saveChanges();
+
+			System.out.println("Setting new random balances...");
+
+			// Now flip zero-ness for first half of balances
+			for (ai = 0; ai < accountBalances.size() / 2; ++ai) {
+				AccountBalanceData accountBalanceData = accountBalances.get(ai);
+
+				accountBalanceData.setBalance(accountBalanceData.getBalance() != 0 ? 0L : random.nextInt(100000));
+			}
+			// ...and randomize the rest
+			for (/*use ai from before*/; ai < accountBalances.size(); ++ai) {
+				AccountBalanceData accountBalanceData = accountBalances.get(ai);
+
+				accountBalanceData.setBalance(random.nextBoolean() ? 0L : random.nextInt(100000));
+			}
+
+			repository.getAccountRepository().setAssetBalances(accountBalances);
+			repository.saveChanges();
+
+			System.out.println("Modifying random balances...");
+
+			// Fill with lots of random balance changes
+			for (ai = 0; ai < accounts.size(); ++ai) {
+				Account account = accounts.get(ai);
+				int assetId = random.nextInt(2);
+				// random zero, or non-zero, balance
+				long balance = random.nextBoolean() ? 0L : random.nextInt(100000);
+
+				accountBalances.add(new AccountBalanceData(account.getAddress(), assetId, balance));
+			}
+
+			repository.getAccountRepository().modifyAssetBalances(accountBalances);
+			repository.saveChanges();
+
+			System.out.println("Deleting all balances...");
+
+			// Now simply delete all balances
+			for (ai = 0; ai < accountBalances.size(); ++ai)
+				accountBalances.get(ai).setBalance(0L);
+
+			repository.getAccountRepository().setAssetBalances(accountBalances);
+			repository.saveChanges();
+		}
 	}
 
 }

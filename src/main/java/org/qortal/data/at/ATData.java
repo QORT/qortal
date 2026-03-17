@@ -23,6 +23,7 @@ public class ATData {
 	private boolean isFrozen;
 	@XmlJavaTypeAdapter(value = org.qortal.api.AmountTypeAdapter.class)
 	private Long frozenBalance;
+	private Long sleepUntilMessageTimestamp;
 
 	// Constructors
 
@@ -31,7 +32,8 @@ public class ATData {
 	}
 
 	public ATData(String ATAddress, byte[] creatorPublicKey, long creation, int version, long assetId, byte[] codeBytes, byte[] codeHash,
-			boolean isSleeping, Integer sleepUntilHeight, boolean isFinished, boolean hadFatalError, boolean isFrozen, Long frozenBalance) {
+			boolean isSleeping, Integer sleepUntilHeight, boolean isFinished, boolean hadFatalError, boolean isFrozen, Long frozenBalance,
+			Long sleepUntilMessageTimestamp) {
 		this.ATAddress = ATAddress;
 		this.creatorPublicKey = creatorPublicKey;
 		this.creation = creation;
@@ -45,6 +47,7 @@ public class ATData {
 		this.hadFatalError = hadFatalError;
 		this.isFrozen = isFrozen;
 		this.frozenBalance = frozenBalance;
+		this.sleepUntilMessageTimestamp = sleepUntilMessageTimestamp;
 	}
 
 	/** For constructing skeleton ATData with bare minimum info. */
@@ -131,6 +134,14 @@ public class ATData {
 
 	public void setFrozenBalance(Long frozenBalance) {
 		this.frozenBalance = frozenBalance;
+	}
+
+	public Long getSleepUntilMessageTimestamp() {
+		return this.sleepUntilMessageTimestamp;
+	}
+
+	public void setSleepUntilMessageTimestamp(Long sleepUntilMessageTimestamp) {
+		this.sleepUntilMessageTimestamp = sleepUntilMessageTimestamp;
 	}
 
 }

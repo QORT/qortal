@@ -8,12 +8,7 @@ import java.nio.file.Paths;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Scanner;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -185,8 +180,7 @@ public class SyncReport {
 
 				// Sync went bad
 				syncEvent = null;
-				continue;
-			}
+            }
 		}
 
 		for (SyncEvent se : syncEvents) {

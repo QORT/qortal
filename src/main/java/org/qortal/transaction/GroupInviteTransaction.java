@@ -1,16 +1,18 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
+import org.qortal.block.BlockChain;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.transaction.GroupInviteTransactionData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.group.Group;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
 
 public class GroupInviteTransaction extends Transaction {
 
@@ -78,14 +80,29 @@ public class GroupInviteTransaction extends Transaction {
 			return ValidationResult.ALREADY_GROUP_MEMBER;
 
 		// Check invitee is not banned
-		if (this.repository.getGroupRepository().banExists(groupId, invitee.getAddress()))
+		if (this.repository.getGroupRepository().banExists(groupId, invitee.getAddress(), this.groupInviteTransactionData.getTimestamp()))
 			return ValidationResult.BANNED_FROM_GROUP;
 
 		// Check creator has enough funds
 		if (admin.getConfirmedBalance(Asset.QORT) < this.groupInviteTransactionData.getFee())
 			return ValidationResult.NO_BALANCE;
 
+		// if null ownership group, then check for admin approval
+		if( this.repository.getBlockRepository().getBlockchainHeight() >= BlockChain.getInstance().getNullGroupMembershipHeight() ) {
+			String groupOwner = this.repository.getGroupRepository().getOwner(groupId);
+			boolean groupOwnedByNullAccount = Objects.equals(groupOwner, Group.NULL_OWNER_ADDRESS);
+
+			// Require approval if transaction relates to a group owned by the null account
+			if (groupOwnedByNullAccount && !this.needsGroupApproval())
+				return ValidationResult.GROUP_APPROVAL_REQUIRED;
+		}
+
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

@@ -1,21 +1,12 @@
 package org.qortal.test.apps;
 
+import javax.net.ssl.*;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.net.SocketAddress;
-import java.net.URL;
+import java.net.*;
 import java.util.Collections;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SNIHostName;
-import javax.net.ssl.SNIServerName;
-import javax.net.ssl.SSLParameters;
-import javax.net.ssl.SSLSocket;
 
 public class ProxyTest {
 	private static final Pattern proxyUrlPattern = Pattern.compile("(https://)([^@:/]+)@([0-9.]{7,15})(/.*)");

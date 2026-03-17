@@ -20,5 +20,6 @@ public abstract class Transformer {
 
 	public static final int MD5_LENGTH = 16;
 	public static final int SHA256_LENGTH = 32;
+	public static final int AES256_LENGTH = 32;
 
 }

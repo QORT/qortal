@@ -1,13 +1,13 @@
 package org.qortal;
 
+import org.qortal.controller.AutoUpdate;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-
-import org.qortal.controller.AutoUpdate;
 
 public class XorUpdate {
 

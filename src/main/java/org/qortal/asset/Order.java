@@ -1,11 +1,5 @@
 package org.qortal.asset;
 
-import static org.qortal.utils.Amounts.prettyAmount;
-
-import java.math.BigInteger;
-import java.util.Arrays;
-import java.util.List;
-
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -18,6 +12,12 @@ import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.utils.Amounts;
 import org.qortal.utils.Base58;
+
+import java.math.BigInteger;
+import java.util.Arrays;
+import java.util.List;
+
+import static org.qortal.utils.Amounts.prettyAmount;
 
 public class Order {
 

@@ -1,18 +1,13 @@
 package org.qortal.network;
 
-import java.net.Inet6Address;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.net.UnknownHostException;
+import com.google.common.net.HostAndPort;
+import com.google.common.net.InetAddresses;
+import org.qortal.settings.Settings;
 
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
-
-import org.qortal.settings.Settings;
-
-import com.google.common.net.HostAndPort;
-import com.google.common.net.InetAddresses;
+import java.net.*;
+import java.util.Optional;
 
 /**
  * Convenience class for encapsulating/parsing/rendering/converting peer addresses
@@ -30,6 +25,38 @@ public class PeerAddress {
 		this.host = host;
 		this.port = port;
 	}
+
+    public PeerAddress(String uri) {
+        if (uri == null || uri.trim().isEmpty()) {
+            throw new IllegalArgumentException("Peer URI cannot be null or empty.");
+        }
+
+        String trimmedUri = uri.trim();
+
+        // Split the URI string at the first colon, resulting in at most two parts.
+        // This is generally safe for host:port separation.
+        String[] parts = trimmedUri.split(":", 2);
+        if (parts.length > 2) {
+            throw new IllegalArgumentException("Peer URI is not formated correctly");
+        }
+
+        if (parts.length == 2) {
+            // Format is "host:port"
+            this.host = parts[0].trim();
+
+            try {
+                // Attempt to parse the port part as an integer
+                this.port = Integer.parseInt(parts[1].trim());
+            } catch (NumberFormatException e) {
+                // Throw an exception if the port number is malformed (e.g., "host:abc")
+                throw new IllegalArgumentException("Invalid port number in Peer URI: " + trimmedUri);
+            }
+        } else {
+            // Format is "host" (no colon found)
+            this.host = trimmedUri;
+            this.port = 0; // Indicate that the port is missing/not specified
+        }
+    }
 
 	// Constructors
 

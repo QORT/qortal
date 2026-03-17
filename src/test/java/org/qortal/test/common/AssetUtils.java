@@ -1,19 +1,8 @@
 package org.qortal.test.common;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-
-import java.util.Base64;
-import java.util.Base64.Encoder;
-
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.data.asset.OrderData;
-import org.qortal.data.transaction.BaseTransactionData;
-import org.qortal.data.transaction.CancelAssetOrderTransactionData;
-import org.qortal.data.transaction.CreateAssetOrderTransactionData;
-import org.qortal.data.transaction.IssueAssetTransactionData;
-import org.qortal.data.transaction.TransactionData;
-import org.qortal.data.transaction.TransferAssetTransactionData;
+import org.qortal.data.transaction.*;
 import org.qortal.group.Group;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
@@ -21,8 +10,13 @@ import org.qortal.repository.RepositoryManager;
 import org.qortal.transaction.Transaction;
 import org.qortal.utils.Amounts;
 
+import java.util.Base64;
+import java.util.Base64.Encoder;
 import java.util.Map;
 import java.util.Random;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
 public class AssetUtils {
 

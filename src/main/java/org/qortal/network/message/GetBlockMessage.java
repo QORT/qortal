@@ -1,20 +1,19 @@
 package org.qortal.network.message;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.nio.ByteBuffer;
-
 import org.qortal.transform.block.BlockTransformer;
 
-public class GetBlockMessage extends Message {
+import java.nio.ByteBuffer;
+import java.util.Arrays;
 
-	private static final int BLOCK_SIGNATURE_LENGTH = BlockTransformer.BLOCK_SIGNATURE_LENGTH;
+public class GetBlockMessage extends Message {
 
 	private byte[] signature;
 
 	public GetBlockMessage(byte[] signature) {
-		this(-1, signature);
+		super(MessageType.GET_BLOCK);
+
+		this.dataBytes = Arrays.copyOf(signature, signature.length);
+		this.checksumBytes = Message.generateChecksum(this.dataBytes);
 	}
 
 	private GetBlockMessage(int id, byte[] signature) {
@@ -27,28 +26,11 @@ public class GetBlockMessage extends Message {
 		return this.signature;
 	}
 
-	public static Message fromByteBuffer(int id, ByteBuffer bytes) throws UnsupportedEncodingException {
-		if (bytes.remaining() != BLOCK_SIGNATURE_LENGTH)
-			return null;
-
-		byte[] signature = new byte[BLOCK_SIGNATURE_LENGTH];
-
+	public static Message fromByteBuffer(int id, ByteBuffer bytes) {
+		byte[] signature = new byte[BlockTransformer.BLOCK_SIGNATURE_LENGTH];
 		bytes.get(signature);
 
 		return new GetBlockMessage(id, signature);
-	}
-
-	@Override
-	protected byte[] toData() {
-		try {
-			ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-
-			bytes.write(this.signature);
-
-			return bytes.toByteArray();
-		} catch (IOException e) {
-			return null;
-		}
 	}
 
 }

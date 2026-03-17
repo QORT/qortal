@@ -1,12 +1,12 @@
 package org.qortal.api.model;
 
+import org.qortal.data.asset.OrderData;
+
 import javax.xml.bind.Marshaller;
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlElement;
 import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
-
-import org.qortal.data.asset.OrderData;
 
 @XmlAccessorType(XmlAccessType.NONE)
 public class AggregatedOrder {

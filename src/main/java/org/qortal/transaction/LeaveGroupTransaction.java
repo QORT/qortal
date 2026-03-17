@@ -1,8 +1,5 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.data.group.GroupData;
@@ -11,6 +8,9 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.group.Group;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.Collections;
+import java.util.List;
 
 public class LeaveGroupTransaction extends Transaction {
 
@@ -65,6 +65,11 @@ public class LeaveGroupTransaction extends Transaction {
 			return ValidationResult.NO_BALANCE;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

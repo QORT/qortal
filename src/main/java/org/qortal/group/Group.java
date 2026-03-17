@@ -1,36 +1,21 @@
 package org.qortal.group;
 
-import static java.util.Arrays.stream;
-import static java.util.stream.Collectors.toMap;
+import org.qortal.account.Account;
+import org.qortal.account.PublicKeyAccount;
+import org.qortal.block.BlockChain;
+import org.qortal.controller.Controller;
+import org.qortal.crypto.Crypto;
+import org.qortal.data.group.*;
+import org.qortal.data.transaction.*;
+import org.qortal.repository.DataException;
+import org.qortal.repository.GroupRepository;
+import org.qortal.repository.Repository;
 
 import java.util.Arrays;
 import java.util.Map;
 
-import org.qortal.account.Account;
-import org.qortal.account.PublicKeyAccount;
-import org.qortal.controller.Controller;
-import org.qortal.crypto.Crypto;
-import org.qortal.data.group.GroupAdminData;
-import org.qortal.data.group.GroupBanData;
-import org.qortal.data.group.GroupData;
-import org.qortal.data.group.GroupInviteData;
-import org.qortal.data.group.GroupJoinRequestData;
-import org.qortal.data.group.GroupMemberData;
-import org.qortal.data.transaction.AddGroupAdminTransactionData;
-import org.qortal.data.transaction.CancelGroupBanTransactionData;
-import org.qortal.data.transaction.CancelGroupInviteTransactionData;
-import org.qortal.data.transaction.CreateGroupTransactionData;
-import org.qortal.data.transaction.GroupBanTransactionData;
-import org.qortal.data.transaction.GroupInviteTransactionData;
-import org.qortal.data.transaction.GroupKickTransactionData;
-import org.qortal.data.transaction.JoinGroupTransactionData;
-import org.qortal.data.transaction.LeaveGroupTransactionData;
-import org.qortal.data.transaction.RemoveGroupAdminTransactionData;
-import org.qortal.data.transaction.TransactionData;
-import org.qortal.data.transaction.UpdateGroupTransactionData;
-import org.qortal.repository.DataException;
-import org.qortal.repository.GroupRepository;
-import org.qortal.repository.Repository;
+import static java.util.Arrays.stream;
+import static java.util.stream.Collectors.toMap;
 
 public class Group {
 
@@ -79,6 +64,9 @@ public class Group {
 
 	// Useful constants
 	public static final int NO_GROUP = 0;
+
+	// Null owner address corresponds with public key "11111111111111111111111111111111"
+	public static String NULL_OWNER_ADDRESS = "QdSnUy6sUiEnaN87dWmE92g1uQjrvPgrWG";
 
 	public static final int MIN_NAME_SIZE = 3;
 	public static final int MAX_NAME_SIZE = 32;
@@ -163,7 +151,12 @@ public class Group {
 	// Adminship
 
 	private GroupAdminData getAdmin(String admin) throws DataException {
-		return groupRepository.getAdmin(this.groupData.getGroupId(), admin);
+		if( repository.getBlockRepository().getBlockchainHeight() < BlockChain.getInstance().getAdminQueryFixHeight()) {
+			return groupRepository.getAdminFaulty(this.groupData.getGroupId(), admin);
+		}
+		else {
+			return groupRepository.getAdmin(this.groupData.getGroupId(), admin);
+		}
 	}
 
 	private boolean adminExists(String admin) throws DataException {
@@ -681,8 +674,8 @@ public class Group {
 	public void uninvite(GroupInviteTransactionData groupInviteTransactionData) throws DataException {
 		String invitee = groupInviteTransactionData.getInvitee();
 
-		// If member exists then they were added when invite matched join request
-		if (this.memberExists(invitee)) {
+		// If member exists and the join request is present then they were added when invite matched join request
+		if (this.memberExists(invitee) && groupInviteTransactionData.getJoinReference() != null) {
 			// Rebuild join request using cached reference to transaction that created join request.
 			this.rebuildJoinRequest(invitee, groupInviteTransactionData.getJoinReference());
 
@@ -713,7 +706,9 @@ public class Group {
 
 		// Save reference to invite transaction so invite can be rebuilt during orphaning.
 		GroupInviteData groupInviteData = this.getInvite(invitee);
-		cancelGroupInviteTransactionData.setInviteReference(groupInviteData.getReference());
+		if( groupInviteData != null) {
+			cancelGroupInviteTransactionData.setInviteReference(groupInviteData.getReference());
+		}
 
 		// Delete invite
 		this.deleteInvite(invitee);
@@ -722,7 +717,9 @@ public class Group {
 	public void uncancelInvite(CancelGroupInviteTransactionData cancelGroupInviteTransactionData) throws DataException {
 		// Reinstate invite
 		TransactionData transactionData = this.repository.getTransactionRepository().fromSignature(cancelGroupInviteTransactionData.getInviteReference());
-		this.addInvite((GroupInviteTransactionData) transactionData);
+		if( transactionData != null ) {
+			this.addInvite((GroupInviteTransactionData) transactionData);
+		}
 
 		// Clear cached reference to invite transaction
 		cancelGroupInviteTransactionData.setInviteReference(null);

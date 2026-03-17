@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+
+# Qortal defaults
+host="localhost"
+port=12391
+
+if [ -z "$*" ]; then
+ 	echo "Usage:"
+	echo
+	echo "Host/update data:"
+	echo "qdn POST [service] [name] PATH [dirpath] <identifier> <title> <description> <tags=tag1,tag2,tag3> <category> <fee> <preview (true or false)>"
+	echo "qdn POST [service] [name] STRING [data-string] <identifier>"
+	echo
+	echo "Fetch data:"
+	echo "qdn GET [service] [name] <identifier-or-default> <filepath-or-default> <rebuild>"
+	echo
+	echo "Notes:"
+	echo "- When requesting a resource, please use 'default' to indicate a file with no identifier."
+	echo "- The same applies when specifying the relative path to a file within the data structure; use 'default'"
+	echo "  to indicate a single file resource."
+	echo
+	exit
+fi
+
+
+# Default ports for Qortal
+mainnet_port=12391
+testnet_port=62391
+
+# Check if the '-t' operator is passed, if so change to utilizing testnet.
+if [[ "$1" == "-t" ]]; then
+  # Use testnet port
+  port=$testnet_port
+  shift
+else
+  # Use mainnet port
+  port=$mainnet_port
+fi
+
+script_dir=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+if [ -f "apikey.txt" ]; then
+  apikey=$(cat "apikey.txt")
+elif [ -f "${script_dir}/../apikey.txt" ]; then
+  apikey=$(cat "${script_dir}/../apikey.txt")
+elif [ -f "${HOME}/qortal/apikey.txt" ]; then
+  apikey=$(cat "${HOME}/qortal/apikey.txt")
+fi
+
+method=$1
+service=$2
+name=$3
+
+if [ -z "${method}" ]; then
+  echo "Error: missing method"
+  exit 1
+fi
+if [ -z "${service}" ]; then
+  echo "Error: missing service"
+  exit 1
+fi
+if [ -z "${name}" ]; then
+  echo "Error: missing name"
+  exit 1
+fi
+
+if [[ "${method}" == "POST" ]]; then
+  type=$4
+  data=$5
+  identifier=$6
+  title=$7
+  description=$8
+  tags=$9
+  category=${10}
+  fee=${11}
+  preview=${12}
+  
+
+
+  if [ -z "${data}" ]; then
+    if [[ "${type}" == "PATH" ]]; then
+      echo "Error: missing directory - please use a path to a directory with a SINGLE file wishing to be published"
+      exit 1
+    elif [[ "${type}" == "STRING" ]]; then
+      echo "Error: missing data string - please input the data string you wish to publish"
+      exit 1
+    else
+      echo "Error: unrecognized type"
+      exit 1
+    fi
+  fi
+  if [ -z "${QORTAL_PRIVKEY}" ]; then
+    echo "Error: missing private key. Set it by running: export QORTAL_PRIVKEY=privkeyhere"
+    exit 1
+  fi
+
+  if [ -z "${identifier}" ]; then
+    identifier="default"
+  fi
+
+  # Create type component in URL
+  if [[ "${type}" == "PATH" ]]; then
+      type_component=""
+  elif [[ "${type}" == "STRING" ]]; then
+      type_component="/string"
+  fi
+  
+  # Create tags component in URL, comma-separated list of tags, will be added to the tags call.
+  tags_component=""
+  if [ -n "${tags}" ]; then
+    IFS=',' read -ra tag_array <<< "${tags}"
+    for tag in "${tag_array[@]}"; do
+      tags_component+="&tags=${tag}"
+    done
+  fi
+  
+    if [ -z ${tags_component} ]; then
+      tags_component=""
+      echo "nothing in tags, using empty tags"
+    fi
+  
+  #Create category component with pre-defined list of categories. Error if category is specified but not in list.
+  allowed_categories=("ART" "AUTOMOTIVE" "BEAUTY" "BOOKS" "BUSINESS" "COMMUNICATIONS" "CRYPTOCURRENCY" "CULTURE" "DATING" "DESIGN" "ENTERTAINMENT" "EVENTS" "FAITH" "FASHION" "FINANCE" "FOOD" "GAMING" "GEOGRAPHY" "HEALTH" "HISTORY" "HOME" "KNOWLEDGE" "LANGUAGE" "LIFESTYLE" "MANUFACTURING" "MAPS" "MUSIC" "NEWS" "OTHER" "PETS" "PHILOSOPHY" "PHOTOGRAPHY" "POLITICS" "PRODUCE" "PRODUCTIVITY" "PSYCHOLOGY" "QORTAL" "SCIENCE" "SELF_CARE" "SELF_SUFFICIENCY" "SHOPPING" "SOCIAL" "SOFTWARE" "SPIRITUALITY" "SPORTS" "STORYTELLING" "TECHNOLOGY" "TOOLS" "TRAVEL" "UNCATEGORIZED" "VIDEO" "WEATHER")
+  
+  if [[ -n "$category" && ! " ${allowed_categories[@]} " =~ " $category " ]]; then
+    echo "Error: Invalid category. Allowed categories are: ${allowed_categories[*]} be sure to place your overall script inputs in the correct order"
+    exit 1
+  elif [ -z "$category" ]; then
+    category=""
+    echo "No category is being set"
+  fi
+  
+  if [ -n "$fee" ]; then
+    if [[ "$fee" == "1" || "$fee" == ".01" ]]; then
+    fee="1000000"
+  elif [ -z "$fee" ]; then
+    fee=""
+  else 
+    echo "Error: Invalid fee value. Expected '1', '.01' or no input."
+    exit 1
+    fi
+    final_fee="${fee}"
+  fi
+
+  
+  # check that preview is true/false
+  if [[ -n "$preview" && ! ( "$preview" == "true" || "$preview" == "false" ) ]]; then
+    echo "Error: Invalid preview value. Expected 'true' or 'false'. Please retry with boolean as preview entry."
+    exit 1
+  elif [ -z "$preview" ]; then
+    preview=""
+  fi
+
+  # Build the API URL
+  api_url="http://${host}:${port}/arbitrary/${service}/${name}/${identifier}${type_component}"
+  api_url+="?title=${title}&description=${description}&tags=${tags_component}&category=${category}&fee=${final_fee}&preview=${preview}"
+
+
+  echo "Creating transaction - this can take a while..."
+  tx_data=$(curl --silent --insecure -X ${method} "${api_url}" -H "accept: text/plain" -H "X-API-KEY: ${apikey}" -H "Content-Type: text/plain" -d "${data}")
+
+  if [[ "${tx_data}" == *"error"* || "${tx_data}" == *"ERROR"* ]]; then
+    echo "Error creating transaction: ${tx_data}"
+    exit 1
+  elif [ -z "${tx_data}" ]; then
+    echo "Error: no transaction data returned"
+    exit 1
+  fi
+
+  echo "Computing nonce..."
+  computed_tx_data=$(curl --silent --insecure -X POST "http://${host}:${port}/arbitrary/compute" -H "Content-Type: application/json" -H "X-API-KEY: ${apikey}" -d "${tx_data}")
+
+  if [[ "${computed_tx_data}" == *"error"* || "${computed_tx_data}" == *"ERROR"* ]]; then
+    echo "Error computing nonce: ${computed_tx_data}"
+    exit 1
+  fi
+
+  echo "Signing..."
+  signed_tx_data=$(curl --silent --insecure -X POST "http://${host}:${port}/transactions/sign" -H  "Content-Type: application/json" -d "{\"privateKey\":\"${QORTAL_PRIVKEY}\",\"transactionBytes\":\"${computed_tx_data}\"}")
+
+  if [[ "${signed_tx_data}" == *"error"* || "${signed_tx_data}" == *"ERROR"* ]]; then
+    echo "Error signing transaction: ${signed_tx_data}"
+    exit 1
+  fi
+
+  echo "Broadcasting..."
+  success=$(curl --silent --insecure -X POST "http://${host}:${port}/transactions/process" -H  "Content-Type: text/plain" -d "${signed_tx_data}")
+
+  if [[ "${success}" == "true" ]]; then
+    echo "Transaction broadcast successfully"
+  else
+    echo "Error when broadcasting transaction. Please try again."
+    echo "Response: ${success}"
+  fi
+
+elif [[ "${method}" == "GET" ]]; then
+  identifier=$4
+  filepath=$5
+  rebuild=$6
+
+  if [ -z "${rebuild}" ]; then
+    rebuild="false"
+  fi
+
+  # Handle default
+  if [[ "${filepath}" == "default" ]]; then
+    filepath=""
+  fi
+
+  # We use a different API depending on whether or not an identifier is supplied
+  if [ -n "${identifier}" ]; then
+    response=$(curl --silent --insecure -X GET "http://${host}:${port}/arbitrary/${service}/${name}/${identifier}?rebuild=${rebuild}&filepath=${filepath}" -H "X-API-KEY: ${apikey}")
+  else
+    response=$(curl --silent --insecure -X GET "http://${host}:${port}/arbitrary/${service}/${name}?rebuild=${rebuild}&filepath=${filepath}" -H "X-API-KEY: ${apikey}")
+  fi
+
+  if [ -z "${response}" ]; then
+    echo "Empty response from ${host}:${port}"
+  fi
+  if [[ "${response}" == *"error"* || "${response}" == *"ERROR"* ]]; then
+    echo "${response}"
+    exit 1
+  fi
+
+  echo "${response}"
+fi
+

@@ -1,9 +1,5 @@
 package org.qortal.transaction;
 
-import java.math.BigInteger;
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.asset.Order;
@@ -15,6 +11,10 @@ import org.qortal.repository.AssetRepository;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.utils.Amounts;
+
+import java.math.BigInteger;
+import java.util.Collections;
+import java.util.List;
 
 public class CreateAssetOrderTransaction extends Transaction {
 
@@ -133,6 +133,11 @@ public class CreateAssetOrderTransaction extends Transaction {
 		}
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

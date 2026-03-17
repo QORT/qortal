@@ -11,6 +11,8 @@ public class NodeInfo {
 	public String buildVersion;
 	public long buildTimestamp;
 	public String nodeId;
+	public boolean isTestNet;
+	public String type;
 
 	public NodeInfo() {
 	}

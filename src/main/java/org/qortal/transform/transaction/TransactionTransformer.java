@@ -1,5 +1,20 @@
 package org.qortal.transform.transaction;
 
+import com.google.common.hash.HashCode;
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.qortal.account.PrivateKeyAccount;
+import org.qortal.data.transaction.TransactionData;
+import org.qortal.transaction.Transaction;
+import org.qortal.transaction.Transaction.TransactionType;
+import org.qortal.transform.TransformationException;
+import org.qortal.transform.Transformer;
+
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlElement;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -10,23 +25,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlElement;
-
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.qortal.account.PrivateKeyAccount;
-import org.qortal.data.transaction.TransactionData;
-import org.qortal.transaction.Transaction;
-import org.qortal.transaction.Transaction.TransactionType;
-import org.qortal.transform.TransformationException;
-import org.qortal.transform.Transformer;
-
-import com.google.common.hash.HashCode;
-import com.google.common.primitives.Ints;
-import com.google.common.primitives.Longs;
 
 public abstract class TransactionTransformer extends Transformer {
 

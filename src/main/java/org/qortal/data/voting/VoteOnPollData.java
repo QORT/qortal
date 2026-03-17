@@ -9,6 +9,11 @@ public class VoteOnPollData {
 
 	// Constructors
 
+	// For JAXB
+	protected VoteOnPollData() {
+		super();
+	}
+
 	public VoteOnPollData(String pollName, byte[] voterPublicKey, int optionIndex) {
 		this.pollName = pollName;
 		this.voterPublicKey = voterPublicKey;
@@ -21,12 +26,24 @@ public class VoteOnPollData {
 		return this.pollName;
 	}
 
+	public void setPollName(String pollName) {
+		this.pollName = pollName;
+	}
+
 	public byte[] getVoterPublicKey() {
 		return this.voterPublicKey;
 	}
 
+	public void setVoterPublicKey(byte[] voterPublicKey) {
+		this.voterPublicKey = voterPublicKey;
+	}
+
 	public int getOptionIndex() {
 		return this.optionIndex;
+	}
+
+	public void setOptionIndex(int optionIndex) {
+		this.optionIndex = optionIndex;
 	}
 
 }

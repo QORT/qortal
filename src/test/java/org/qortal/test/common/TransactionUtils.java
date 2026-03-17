@@ -1,12 +1,5 @@
 package org.qortal.test.common;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.List;
-
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.repository.DataException;
@@ -15,6 +8,13 @@ import org.qortal.test.common.transaction.TestTransaction;
 import org.qortal.transaction.Transaction;
 import org.qortal.transaction.Transaction.TransactionType;
 import org.qortal.transaction.Transaction.ValidationResult;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.List;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class TransactionUtils {
 

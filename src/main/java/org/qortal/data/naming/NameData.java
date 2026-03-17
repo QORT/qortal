@@ -1,11 +1,11 @@
 package org.qortal.data.naming;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlTransient;
 import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
-
-import io.swagger.v3.oas.annotations.media.Schema;
 
 // All properties to be converted to JSON via JAX-RS
 @XmlAccessorType(XmlAccessType.FIELD)
@@ -65,6 +65,11 @@ public class NameData {
 	// Typically used when registering a new name
 	public NameData(String name, String reducedName, String owner, String data, long registered, byte[] reference, int creationGroupId) {
 		this(name, reducedName, owner, data, registered, null, false, null, reference, creationGroupId);
+	}
+
+	// Typically used for name summsry
+	public NameData(String name, String owner) {
+		this(name, null, owner, null, 0L, null, false, null, null, 0);
 	}
 
 	// Getters / setters

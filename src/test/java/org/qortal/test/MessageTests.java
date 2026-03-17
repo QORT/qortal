@@ -1,5 +1,6 @@
 package org.qortal.test;
 
+import org.apache.commons.lang3.reflect.FieldUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -14,12 +15,9 @@ import org.qortal.group.Group.ApprovalThreshold;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.repository.RepositoryManager;
-import org.qortal.test.common.BlockUtils;
-import org.qortal.test.common.Common;
-import org.qortal.test.common.GroupUtils;
-import org.qortal.test.common.TestAccount;
-import org.qortal.test.common.TransactionUtils;
+import org.qortal.test.common.*;
 import org.qortal.test.common.transaction.TestTransaction;
+import org.qortal.transaction.DeployAtTransaction;
 import org.qortal.transaction.MessageTransaction;
 import org.qortal.transaction.Transaction;
 import org.qortal.transaction.Transaction.TransactionType;
@@ -29,9 +27,10 @@ import org.qortal.transform.transaction.MessageTransactionTransformer;
 import org.qortal.transform.transaction.TransactionTransformer;
 import org.qortal.utils.NTP;
 
-import static org.junit.Assert.*;
-
+import java.util.List;
 import java.util.Random;
+
+import static org.junit.Assert.*;
 
 public class MessageTests extends Common {
 
@@ -85,7 +84,7 @@ public class MessageTests extends Common {
 		byte[] randomReference = new byte[64];
 		random.nextBytes(randomReference);
 
-		long minimumFee = BlockChain.getInstance().getUnitFee();
+		long minimumFee = BlockChain.getInstance().getUnitFeeAtTimestamp(System.currentTimeMillis());
 
 		try (final Repository repository = RepositoryManager.getRepository()) {
 			PrivateKeyAccount alice = Common.getTestAccount(repository, "alice");
@@ -139,7 +138,7 @@ public class MessageTests extends Common {
 	}
 
 	@Test
-	public void withRecipentWithAmount() throws DataException {
+	public void withRecipientWithAmount() throws DataException {
 		testMessage(Group.NO_GROUP, recipient, 123L, Asset.QORT);
 	}
 
@@ -154,6 +153,140 @@ public class MessageTests extends Common {
 	}
 
 	@Test
+	public void atRecipientNoFeeWithNonce() throws DataException {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			PrivateKeyAccount alice = Common.getTestAccount(repository, "alice");
+			String atRecipient = deployAt();
+			MessageTransaction transaction = testFeeNonce(repository, false, true, atRecipient, true);
+
+			// Transaction should be confirmable because it's to an AT, and therefore should be present in a block
+			assertTrue(transaction.isConfirmable());
+			TransactionUtils.signAndMint(repository, transaction.getTransactionData(), alice);
+			assertTrue(isTransactionConfirmed(repository, transaction));
+			assertEquals(16, transaction.getPoWDifficulty());
+
+			BlockUtils.orphanLastBlock(repository);
+		}
+	}
+
+	@Test
+	public void regularRecipientNoFeeWithNonce() throws DataException {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			PrivateKeyAccount alice = Common.getTestAccount(repository, "alice");
+
+			// Transaction should not be present in db yet
+			List<MessageTransactionData> messageTransactionsData = repository.getMessageRepository().getMessagesByParticipants(null, recipient, null, null, null);
+			assertTrue(messageTransactionsData.isEmpty());
+
+			MessageTransaction transaction = testFeeNonce(repository, false, true, recipient, true);
+
+			// Transaction shouldn't be confirmable because it's not to an AT, and therefore shouldn't be present in a block
+			assertFalse(transaction.isConfirmable());
+			TransactionUtils.signAndMint(repository, transaction.getTransactionData(), alice);
+			assertFalse(isTransactionConfirmed(repository, transaction));
+			assertEquals(12, transaction.getPoWDifficulty());
+
+			// Transaction should be found when trade bot searches for it
+			messageTransactionsData = repository.getMessageRepository().getMessagesByParticipants(null, recipient, null, null, null);
+			assertEquals(1, messageTransactionsData.size());
+
+			BlockUtils.orphanLastBlock(repository);
+		}
+	}
+
+	@Test
+	public void noRecipientNoFeeWithNonce() throws DataException {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			PrivateKeyAccount alice = Common.getTestAccount(repository, "alice");
+
+			MessageTransaction transaction = testFeeNonce(repository, false, true, null, true);
+
+			// Transaction shouldn't be confirmable because it's not to an AT, and therefore shouldn't be present in a block
+			assertFalse(transaction.isConfirmable());
+			TransactionUtils.signAndMint(repository, transaction.getTransactionData(), alice);
+			assertFalse(isTransactionConfirmed(repository, transaction));
+			assertEquals(12, transaction.getPoWDifficulty());
+
+			BlockUtils.orphanLastBlock(repository);
+		}
+	}
+
+	@Test
+	public void atRecipientWithFeeNoNonce() throws DataException {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			PrivateKeyAccount alice = Common.getTestAccount(repository, "alice");
+			String atRecipient = deployAt();
+			MessageTransaction transaction = testFeeNonce(repository, true, false, atRecipient, true);
+
+			// Transaction should be confirmable because it's to an AT, and therefore should be present in a block
+			assertTrue(transaction.isConfirmable());
+			TransactionUtils.signAndMint(repository, transaction.getTransactionData(), alice);
+			assertTrue(isTransactionConfirmed(repository, transaction));
+			assertEquals(16, transaction.getPoWDifficulty());
+
+			BlockUtils.orphanLastBlock(repository);
+		}
+	}
+
+	@Test
+	public void regularRecipientWithFeeNoNonce() throws DataException {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			PrivateKeyAccount alice = Common.getTestAccount(repository, "alice");
+
+			MessageTransaction transaction = testFeeNonce(repository, true, false, recipient, true);
+
+			// Transaction shouldn't be confirmable because it's not to an AT, and therefore shouldn't be present in a block
+			assertFalse(transaction.isConfirmable());
+			TransactionUtils.signAndMint(repository, transaction.getTransactionData(), alice);
+			assertFalse(isTransactionConfirmed(repository, transaction));
+			assertEquals(12, transaction.getPoWDifficulty());
+
+			BlockUtils.orphanLastBlock(repository);
+		}
+	}
+
+	@Test
+	public void atRecipientNoFeeWithNonceLegacyDifficulty() throws DataException, IllegalAccessException {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			// Set mempowTransactionUpdatesTimestamp to a high value, so that it hasn't activated key
+			FieldUtils.writeField(BlockChain.getInstance(), "mempowTransactionUpdatesTimestamp", Long.MAX_VALUE, true);
+
+			PrivateKeyAccount alice = Common.getTestAccount(repository, "alice");
+			String atRecipient = deployAt();
+			MessageTransaction transaction = testFeeNonce(repository, false, true, atRecipient, true);
+
+			// Transaction should be confirmable because all MESSAGE transactions confirmed prior to the feature trigger
+			assertTrue(transaction.isConfirmable());
+			TransactionUtils.signAndMint(repository, transaction.getTransactionData(), alice);
+			assertTrue(isTransactionConfirmed(repository, transaction));
+			assertEquals(14, transaction.getPoWDifficulty()); // Legacy difficulty was 14 in all cases
+
+			BlockUtils.orphanLastBlock(repository);
+		}
+	}
+
+	@Test
+	public void regularRecipientNoFeeWithNonceLegacyDifficulty() throws DataException, IllegalAccessException {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			// Set mempowTransactionUpdatesTimestamp to a high value, so that it hasn't activated key
+			FieldUtils.writeField(BlockChain.getInstance(), "mempowTransactionUpdatesTimestamp", Long.MAX_VALUE, true);
+
+			PrivateKeyAccount alice = Common.getTestAccount(repository, "alice");
+			MessageTransaction transaction = testFeeNonce(repository, false, true, recipient, true);
+
+			// Transaction should be confirmable because all MESSAGE transactions confirmed prior to the feature trigger
+			assertTrue(transaction.isConfirmable());
+			TransactionUtils.signAndMint(repository, transaction.getTransactionData(), alice);
+			assertTrue(isTransactionConfirmed(repository, transaction)); // All MESSAGE transactions would confirm before feature trigger
+			assertEquals(14, transaction.getPoWDifficulty()); // Legacy difficulty was 14 in all cases
+
+			BlockUtils.orphanLastBlock(repository);
+		}
+	}
+
+	@Test
 	public void serializationTests() throws DataException, TransformationException {
 		// with recipient, with amount
 		testSerialization(recipient, 123L, Asset.QORT);
@@ -163,6 +296,24 @@ public class MessageTests extends Common {
 
 		// no recipient (message to group), no amount
 		testSerialization(null, 0L, null);
+	}
+
+	private String deployAt() throws DataException {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			PrivateKeyAccount deployer = Common.getTestAccount(repository, "alice");
+			byte[] creationBytes = AtUtils.buildSimpleAT();
+			long fundingAmount = 1_00000000L;
+			DeployAtTransaction deployAtTransaction = AtUtils.doDeployAT(repository, deployer, creationBytes, fundingAmount);
+
+			String address = deployAtTransaction.getATAccount().getAddress();
+			assertNotNull(address);
+			return address;
+		}
+	}
+
+	private boolean isTransactionConfirmed(Repository repository, MessageTransaction transaction) throws DataException {
+		TransactionData queriedTransactionData = repository.getTransactionRepository().fromSignature(transaction.getTransactionData().getSignature());
+		return queriedTransactionData.getBlockHeight() != null && queriedTransactionData.getBlockHeight() > 0;
 	}
 
 	private boolean isValid(int txGroupId, String recipient, long amount, Long assetId) throws DataException {
@@ -195,41 +346,48 @@ public class MessageTests extends Common {
 		return messageTransaction.hasValidReference();
 	}
 
-	private void testFeeNonce(boolean withFee, boolean withNonce, boolean isValid) throws DataException {
+
+	private MessageTransaction testFeeNonce(boolean withFee, boolean withNonce, boolean isValid) throws DataException {
 		try (final Repository repository = RepositoryManager.getRepository()) {
-			TestAccount alice = Common.getTestAccount(repository, "alice");
-
-			int txGroupId = 0;
-			int nonce = 0;
-			long amount = 0;
-			long assetId = Asset.QORT;
-			byte[] data = new byte[1];
-			boolean isText = false;
-			boolean isEncrypted = false;
-
-			MessageTransactionData transactionData = new MessageTransactionData(TestTransaction.generateBase(alice, txGroupId),
-					version, nonce, recipient, amount, assetId, data, isText, isEncrypted);
-
-			MessageTransaction transaction = new MessageTransaction(repository, transactionData);
-
-			if (withFee)
-				transactionData.setFee(transaction.calcRecommendedFee());
-			else
-				transactionData.setFee(0L);
-
-			if (withNonce) {
-				transaction.computeNonce();
-			} else {
-				transactionData.setNonce(-1);
-			}
-
-			transaction.sign(alice);
-
-			assertEquals(isValid, transaction.isSignatureValid());
+			return testFeeNonce(repository, withFee, withNonce, recipient, isValid);
 		}
 	}
 
-	private void testMessage(int txGroupId, String recipient, long amount, Long assetId) throws DataException {
+	private MessageTransaction testFeeNonce(Repository repository, boolean withFee, boolean withNonce, String recipient, boolean isValid) throws DataException {
+		TestAccount alice = Common.getTestAccount(repository, "alice");
+
+		int txGroupId = 0;
+		int nonce = 0;
+		long amount = 0;
+		long assetId = Asset.QORT;
+		byte[] data = new byte[1];
+		boolean isText = false;
+		boolean isEncrypted = false;
+
+		MessageTransactionData transactionData = new MessageTransactionData(TestTransaction.generateBase(alice, txGroupId),
+				version, nonce, recipient, amount, assetId, data, isText, isEncrypted);
+
+		MessageTransaction transaction = new MessageTransaction(repository, transactionData);
+
+		if (withFee)
+			transactionData.setFee(transaction.calcRecommendedFee());
+		else
+			transactionData.setFee(0L);
+
+		if (withNonce) {
+			transaction.computeNonce();
+		} else {
+			transactionData.setNonce(-1);
+		}
+
+		transaction.sign(alice);
+
+		assertEquals(isValid, transaction.isSignatureValid());
+
+		return transaction;
+	}
+
+	private MessageTransaction testMessage(int txGroupId, String recipient, long amount, Long assetId) throws DataException {
 		try (final Repository repository = RepositoryManager.getRepository()) {
 			TestAccount alice = Common.getTestAccount(repository, "alice");
 
@@ -244,6 +402,8 @@ public class MessageTests extends Common {
 			TransactionUtils.signAndMint(repository, transactionData, alice);
 
 			BlockUtils.orphanLastBlock(repository);
+
+			return new MessageTransaction(repository, transactionData);
 		}
 	}
 

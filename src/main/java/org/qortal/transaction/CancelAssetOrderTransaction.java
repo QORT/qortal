@@ -1,9 +1,5 @@
 package org.qortal.transaction;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.asset.Order;
@@ -13,6 +9,10 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.repository.AssetRepository;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 public class CancelAssetOrderTransaction extends Transaction {
 
@@ -60,6 +60,11 @@ public class CancelAssetOrderTransaction extends Transaction {
 			return ValidationResult.NO_BALANCE;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

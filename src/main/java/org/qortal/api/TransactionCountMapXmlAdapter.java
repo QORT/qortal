@@ -1,17 +1,16 @@
 package org.qortal.api;
 
+import org.eclipse.persistence.oxm.annotations.XmlVariableNode;
+import org.qortal.transaction.Transaction.TransactionType;
+
+import javax.xml.bind.annotation.XmlTransient;
+import javax.xml.bind.annotation.XmlValue;
+import javax.xml.bind.annotation.adapters.XmlAdapter;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-
-import javax.xml.bind.annotation.XmlTransient;
-import javax.xml.bind.annotation.XmlValue;
-import javax.xml.bind.annotation.adapters.XmlAdapter;
-
-import org.eclipse.persistence.oxm.annotations.XmlVariableNode;
-import org.qortal.transaction.Transaction.TransactionType;
 
 public class TransactionCountMapXmlAdapter extends XmlAdapter<TransactionCountMapXmlAdapter.StringIntegerMap, Map<TransactionType, Integer>> {
 

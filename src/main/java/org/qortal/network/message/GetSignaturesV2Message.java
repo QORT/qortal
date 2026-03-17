@@ -1,25 +1,32 @@
 package org.qortal.network.message;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.nio.ByteBuffer;
-
-import org.qortal.transform.Transformer;
+import com.google.common.primitives.Ints;
 import org.qortal.transform.block.BlockTransformer;
 
-import com.google.common.primitives.Ints;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class GetSignaturesV2Message extends Message {
-
-	private static final int BLOCK_SIGNATURE_LENGTH = BlockTransformer.BLOCK_SIGNATURE_LENGTH;
-	private static final int NUMBER_REQUESTED_LENGTH = Transformer.INT_LENGTH;
 
 	private byte[] parentSignature;
 	private int numberRequested;
 
 	public GetSignaturesV2Message(byte[] parentSignature, int numberRequested) {
-		this(-1, parentSignature, numberRequested);
+		super(MessageType.GET_SIGNATURES_V2);
+
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+
+		try {
+			bytes.write(parentSignature);
+
+			bytes.write(Ints.toByteArray(numberRequested));
+		} catch (IOException e) {
+			throw new AssertionError("IOException shouldn't occur with ByteArrayOutputStream");
+		}
+
+		this.dataBytes = bytes.toByteArray();
+		this.checksumBytes = Message.generateChecksum(this.dataBytes);
 	}
 
 	private GetSignaturesV2Message(int id, byte[] parentSignature, int numberRequested) {
@@ -37,31 +44,13 @@ public class GetSignaturesV2Message extends Message {
 		return this.numberRequested;
 	}
 
-	public static Message fromByteBuffer(int id, ByteBuffer bytes) throws UnsupportedEncodingException {
-		if (bytes.remaining() != BLOCK_SIGNATURE_LENGTH + NUMBER_REQUESTED_LENGTH)
-			return null;
-
-		byte[] parentSignature = new byte[BLOCK_SIGNATURE_LENGTH];
+	public static Message fromByteBuffer(int id, ByteBuffer bytes) {
+		byte[] parentSignature = new byte[BlockTransformer.BLOCK_SIGNATURE_LENGTH];
 		bytes.get(parentSignature);
 
 		int numberRequested = bytes.getInt();
 
 		return new GetSignaturesV2Message(id, parentSignature, numberRequested);
-	}
-
-	@Override
-	protected byte[] toData() {
-		try {
-			ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-
-			bytes.write(this.parentSignature);
-
-			bytes.write(Ints.toByteArray(this.numberRequested));
-
-			return bytes.toByteArray();
-		} catch (IOException e) {
-			return null;
-		}
 	}
 
 }

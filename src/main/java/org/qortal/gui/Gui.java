@@ -1,17 +1,15 @@
 package org.qortal.gui;
 
-import java.awt.GraphicsEnvironment;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import javax.imageio.ImageIO;
+import javax.swing.*;
+import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
-
-import javax.imageio.ImageIO;
-import javax.swing.JOptionPane;
-import javax.swing.UIManager;
-import javax.swing.UnsupportedLookAndFeelException;
-
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import java.util.ServiceConfigurationError;
 
 public class Gui {
 
@@ -23,17 +21,21 @@ public class Gui {
 	private SysTray sysTray = null;
 
 	private Gui() {
-		this.isHeadless = GraphicsEnvironment.isHeadless();
+		try {
+			this.isHeadless = GraphicsEnvironment.isHeadless();
 
-		if (!this.isHeadless) {
-			try {
-				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-			} catch (ClassNotFoundException | InstantiationException | IllegalAccessException
-					| UnsupportedLookAndFeelException e) {
-				// Use whatever look-and-feel comes by default then
+			if (!this.isHeadless) {
+				try {
+					UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+				} catch (ClassNotFoundException | InstantiationException | IllegalAccessException
+						| UnsupportedLookAndFeelException e) {
+					// Use whatever look-and-feel comes by default then
+				}
+
+				showSplash();
 			}
-
-			showSplash();
+		} catch (Exception e) {
+			LOGGER.info("Unable to initialize GUI: {}", e.getMessage());
 		}
 	}
 
@@ -45,7 +47,7 @@ public class Gui {
 	protected static BufferedImage loadImage(String resourceName) {
 		try (InputStream in = Gui.class.getResourceAsStream("/images/" + resourceName)) {
 			return ImageIO.read(in);
-		} catch (IllegalArgumentException | IOException e) {
+		} catch (IllegalArgumentException | IOException | ServiceConfigurationError e) {
 			LOGGER.warn(String.format("Couldn't locate image resource \"images/%s\"", resourceName));
 			return null;
 		}

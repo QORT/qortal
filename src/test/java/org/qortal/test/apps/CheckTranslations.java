@@ -1,22 +1,22 @@
 package org.qortal.test.apps;
 
+import org.qortal.api.ApiError;
+import org.qortal.globalization.Translator;
+import org.qortal.transaction.Transaction.ValidationResult;
+
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import org.qortal.api.ApiError;
-import org.qortal.globalization.Translator;
-import org.qortal.transaction.Transaction.ValidationResult;
-
 public class CheckTranslations {
 
 	private static final String[] SUPPORTED_LANGS = new String[] { "en", "de", "zh", "ru" };
 	private static final Set<String> SYSTRAY_KEYS = Set.of("AUTO_UPDATE", "APPLYING_UPDATE_AND_RESTARTING", "BLOCK_HEIGHT",
-			"CHECK_TIME_ACCURACY", "CONNECTING", "CONNECTION", "CONNECTIONS", "CREATING_BACKUP_OF_DB_FILES", "DB_BACKUP", "EXIT",
-			"MINTING_DISABLED", "MINTING_ENABLED", "NTP_NAG_CAPTION", "NTP_NAG_TEXT_UNIX", "NTP_NAG_TEXT_WINDOWS",
-			"OPEN_UI", "SYNCHRONIZE_CLOCK", "SYNCHRONIZING_BLOCKCHAIN", "SYNCHRONIZING_CLOCK");
+			"BUILD_VERSION", "CHECK_TIME_ACCURACY", "CONNECTING", "CONNECTION", "CONNECTIONS", "CREATING_BACKUP_OF_DB_FILES",
+			"DB_BACKUP", "DB_CHECKPOINT", "EXIT", "LITE_NODE", "MINTING_DISABLED", "MINTING_ENABLED", "PERFORMING_DB_CHECKPOINT",
+			"SYNCHRONIZE_CLOCK", "SYNCHRONIZING_BLOCKCHAIN", "SYNCHRONIZING_CLOCK");
 
 	private static String failurePrefix;
 

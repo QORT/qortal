@@ -1,5 +1,9 @@
 package org.qortal.test;
 
+import org.junit.Test;
+import org.qortal.utils.ExecuteProduceConsume;
+import org.qortal.utils.ExecuteProduceConsume.StatsSnapshot;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -9,13 +13,25 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import org.junit.Test;
-import org.qortal.utils.ExecuteProduceConsume;
-import org.qortal.utils.ExecuteProduceConsume.StatsSnapshot;
+import static org.junit.Assert.fail;
 
 public class EPCTests {
 
-	class RandomEPC extends ExecuteProduceConsume {
+	static class SleepTask implements ExecuteProduceConsume.Task {
+		private static final Random RANDOM = new Random();
+
+		@Override
+		public String getName() {
+			return "SleepTask";
+		}
+
+		@Override
+		public void perform() throws InterruptedException {
+			Thread.sleep(RANDOM.nextInt(500) + 100);
+		}
+	}
+
+	static class RandomEPC extends ExecuteProduceConsume {
 		private final int TASK_PERCENT;
 		private final int PAUSE_PERCENT;
 
@@ -37,9 +53,7 @@ public class EPCTests {
 
 			// Sometimes produce a task
 			if (percent < TASK_PERCENT) {
-				return () -> {
-					Thread.sleep(random.nextInt(500) + 100);
-				};
+				return new SleepTask();
 			} else {
 				// If we don't produce a task, then maybe simulate a pause until work arrives
 				if (canIdle && percent < PAUSE_PERCENT)
@@ -48,45 +62,6 @@ public class EPCTests {
 				return null;
 			}
 		}
-	}
-
-	private void testEPC(ExecuteProduceConsume testEPC) throws InterruptedException {
-		final int runTime = 60; // seconds
-		System.out.println(String.format("Testing EPC for %s seconds:", runTime));
-
-		final long start = System.currentTimeMillis();
-		testEPC.start();
-
-		// Status reports every second (bar waiting for synchronization)
-		ScheduledExecutorService statusExecutor = Executors.newSingleThreadScheduledExecutor();
-
-		statusExecutor.scheduleAtFixedRate(() -> {
-			final StatsSnapshot snapshot = testEPC.getStatsSnapshot();
-			final long seconds = (System.currentTimeMillis() - start) / 1000L;
-			System.out.print(String.format("After %d second%s, ", seconds, (seconds != 1 ? "s" : "")));
-			printSnapshot(snapshot);
-		}, 1L, 1L, TimeUnit.SECONDS);
-
-		// Let it run for a minute
-		Thread.sleep(runTime * 1000L);
-		statusExecutor.shutdownNow();
-
-		final long before = System.currentTimeMillis();
-		testEPC.shutdown(30 * 1000);
-		final long after = System.currentTimeMillis();
-
-		System.out.println(String.format("Shutdown took %d milliseconds", after - before));
-
-		final StatsSnapshot snapshot = testEPC.getStatsSnapshot();
-		System.out.print("After shutdown, ");
-		printSnapshot(snapshot);
-	}
-
-	private void printSnapshot(final StatsSnapshot snapshot) {
-		System.out.println(String.format("threads: %d active (%d max, %d exhaustion%s), tasks: %d produced / %d consumed",
-				snapshot.activeThreadCount, snapshot.greatestActiveThreadCount,
-				snapshot.spawnFailures, (snapshot.spawnFailures != 1 ? "s": ""),
-				snapshot.tasksProduced, snapshot.tasksConsumed));
 	}
 
 	@Test
@@ -131,18 +106,39 @@ public class EPCTests {
 
 		final int MAX_PEERS = 20;
 
-		final List<Long> lastPings = new ArrayList<>(Collections.nCopies(MAX_PEERS, System.currentTimeMillis()));
+		final List<Long> lastPingProduced = new ArrayList<>(Collections.nCopies(MAX_PEERS, System.currentTimeMillis()));
 
 		class PingTask implements ExecuteProduceConsume.Task {
 			private final int peerIndex;
+			private final long lastPing;
+			private final long productionTimestamp;
+			private final String name;
 
-			public PingTask(int peerIndex) {
+			public PingTask(int peerIndex, long lastPing, long productionTimestamp) {
 				this.peerIndex = peerIndex;
+				this.lastPing = lastPing;
+				this.productionTimestamp = productionTimestamp;
+				this.name = "PingTask::[" + this.peerIndex + "]";
+			}
+
+			@Override
+			public String getName() {
+				return name;
 			}
 
 			@Override
 			public void perform() throws InterruptedException {
-				System.out.println("Pinging peer " + peerIndex);
+				long now = System.currentTimeMillis();
+
+				System.out.println(String.format("Pinging peer %d after post-production delay of %dms and ping interval of %dms",
+						peerIndex,
+						now - productionTimestamp,
+						now - lastPing
+				));
+
+				long threshold = now - PING_INTERVAL - PRODUCER_SLEEP_TIME;
+				if (lastPing < threshold)
+					fail("excessive peer ping interval for peer " + peerIndex);
 
 				// At least half the worst case ping round-trip
 				Random random = new Random();
@@ -155,32 +151,73 @@ public class EPCTests {
 		class PingEPC extends ExecuteProduceConsume {
 			@Override
 			protected Task produceTask(boolean canIdle) throws InterruptedException {
-				// If we can idle, then we do, to simulate worst case
-				if (canIdle)
-					Thread.sleep(PRODUCER_SLEEP_TIME);
-
 				// Is there a peer that needs a ping?
 				final long now = System.currentTimeMillis();
-				synchronized (lastPings) {
-					for (int peerIndex = 0; peerIndex < lastPings.size(); ++peerIndex) {
-						long lastPing = lastPings.get(peerIndex);
-
-						if (lastPing < now - PING_INTERVAL - PING_ROUND_TRIP_TIME - PRODUCER_SLEEP_TIME)
-							throw new RuntimeException("excessive peer ping interval for peer " + peerIndex);
+				synchronized (lastPingProduced) {
+					for (int peerIndex = 0; peerIndex < lastPingProduced.size(); ++peerIndex) {
+						long lastPing = lastPingProduced.get(peerIndex);
 
 						if (lastPing < now - PING_INTERVAL) {
-							lastPings.set(peerIndex, System.currentTimeMillis());
-							return new PingTask(peerIndex);
+							lastPingProduced.set(peerIndex, System.currentTimeMillis());
+							return new PingTask(peerIndex, lastPing, now);
 						}
 					}
 				}
+
+				// If we can idle, then we do, to simulate worst case
+				if (canIdle)
+					Thread.sleep(PRODUCER_SLEEP_TIME);
 
 				// No work to do
 				return null;
 			}
 		}
 
+		System.out.println(String.format("Pings should start after %s seconds", PING_INTERVAL));
+
 		testEPC(new PingEPC());
+	}
+
+	private void testEPC(ExecuteProduceConsume testEPC) throws InterruptedException {
+		final int runTime = 60; // seconds
+		System.out.println(String.format("Testing EPC for %s seconds:", runTime));
+
+		final long start = System.currentTimeMillis();
+
+		// Status reports every second (bar waiting for synchronization)
+		ScheduledExecutorService statusExecutor = Executors.newSingleThreadScheduledExecutor();
+
+		statusExecutor.scheduleAtFixedRate(
+				() -> {
+					final StatsSnapshot snapshot = testEPC.getStatsSnapshot();
+					final long seconds = (System.currentTimeMillis() - start) / 1000L;
+					System.out.println(String.format("After %d second%s, %s", seconds, seconds != 1 ? "s" : "", formatSnapshot(snapshot)));
+				},
+				0L, 1L, TimeUnit.SECONDS
+		);
+
+		testEPC.start();
+
+		// Let it run for a minute
+		Thread.sleep(runTime * 1000L);
+		statusExecutor.shutdownNow();
+
+		final long before = System.currentTimeMillis();
+		testEPC.shutdown(30 * 1000);
+		final long after = System.currentTimeMillis();
+
+		System.out.println(String.format("Shutdown took %d milliseconds", after - before));
+
+		final StatsSnapshot snapshot = testEPC.getStatsSnapshot();
+		System.out.println("After shutdown, " + formatSnapshot(snapshot));
+	}
+
+	private String formatSnapshot(StatsSnapshot snapshot) {
+		return String.format("threads: %d active (%d max, %d exhaustion%s), tasks: %d produced / %d consumed",
+				snapshot.activeThreadCount, snapshot.greatestActiveThreadCount,
+				snapshot.spawnFailures, (snapshot.spawnFailures != 1 ? "s": ""),
+				snapshot.tasksProduced, snapshot.tasksConsumed
+		);
 	}
 
 }

@@ -1,15 +1,16 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
+import org.qortal.block.BlockChain;
 import org.qortal.data.PaymentData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.data.transaction.TransferAssetTransactionData;
 import org.qortal.payment.Payment;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.Collections;
+import java.util.List;
 
 public class TransferAssetTransaction extends Transaction {
 
@@ -51,6 +52,14 @@ public class TransferAssetTransaction extends Transaction {
 
 	@Override
 	public ValidationResult isValid() throws DataException {
+		int blockchainHeight = this.repository.getBlockRepository().getBlockchainHeight();
+		final int start = BlockChain.getInstance().getSelfSponsorshipAlgoV2Height();
+		final int end = BlockChain.getInstance().getSelfSponsorshipAlgoV3Height();
+
+		// Check if we are on algo runs
+		if (blockchainHeight >= start && blockchainHeight <= end)
+		       return ValidationResult.ASSET_NOT_SPENDABLE;
+
 		// Wrap asset transfer as a payment and delegate final payment checks to Payment class
 		return new Payment(this.repository).isValid(this.transferAssetTransactionData.getSenderPublicKey(), getPaymentData(), this.transferAssetTransactionData.getFee());
 	}
@@ -59,6 +68,11 @@ public class TransferAssetTransaction extends Transaction {
 	public ValidationResult isProcessable() throws DataException {
 		// Wrap asset transfer as a payment and delegate final processable checks to Payment class
 		return new Payment(this.repository).isProcessable(this.transferAssetTransactionData.getSenderPublicKey(), getPaymentData(), this.transferAssetTransactionData.getFee());
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

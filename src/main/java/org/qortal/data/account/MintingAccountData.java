@@ -1,13 +1,14 @@
 package org.qortal.data.account;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.media.Schema.AccessMode;
+import org.json.JSONObject;
+import org.qortal.crypto.Crypto;
+import org.qortal.utils.Base58;
+
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlTransient;
-
-import org.qortal.crypto.Crypto;
-
-import io.swagger.v3.oas.annotations.media.Schema;
-import io.swagger.v3.oas.annotations.media.Schema.AccessMode;
 
 // All properties to be converted to JSON via JAXB
 @XmlAccessorType(XmlAccessType.FIELD)
@@ -59,6 +60,23 @@ public class MintingAccountData {
 
 	public byte[] getPublicKey() {
 		return this.publicKey;
+	}
+
+
+	// JSON
+
+	public JSONObject toJson() {
+		JSONObject jsonObject = new JSONObject();
+		jsonObject.put("privateKey", Base58.encode(this.getPrivateKey()));
+		jsonObject.put("publicKey", Base58.encode(this.getPublicKey()));
+		return jsonObject;
+	}
+
+	public static MintingAccountData fromJson(JSONObject json) {
+		return new MintingAccountData(
+				json.isNull("privateKey") ? null : Base58.decode(json.getString("privateKey")),
+				json.isNull("publicKey") ? null : Base58.decode(json.getString("publicKey"))
+		);
 	}
 
 }

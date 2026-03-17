@@ -8,24 +8,12 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
-
-import java.util.List;
-
-import javax.servlet.http.HttpServletRequest;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.MediaType;
-
 import org.ciyam.at.MachineState;
 import org.qortal.api.ApiError;
 import org.qortal.api.ApiErrors;
 import org.qortal.api.ApiException;
 import org.qortal.api.ApiExceptionFactory;
-import org.qortal.at.QortalAtLoggerFactory;
+import org.qortal.api.model.AtCreationRequest;
 import org.qortal.data.at.ATData;
 import org.qortal.data.at.ATStateData;
 import org.qortal.data.transaction.DeployAtTransactionData;
@@ -38,10 +26,20 @@ import org.qortal.transaction.Transaction.ValidationResult;
 import org.qortal.transform.TransformationException;
 import org.qortal.transform.transaction.DeployAtTransactionTransformer;
 import org.qortal.utils.Base58;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.ws.rs.*;
+import javax.ws.rs.core.Context;
+import javax.ws.rs.core.MediaType;
+import java.util.List;
+
 
 @Path("/at")
 @Tag(name = "Automated Transactions")
 public class AtResource {
+	private static final Logger logger = LoggerFactory.getLogger(AtResource.class);
 
 	@Context
 	HttpServletRequest request;
@@ -147,8 +145,7 @@ public class AtResource {
 			ATStateData atStateData = repository.getATRepository().getLatestATState(atAddress);
 			byte[] stateData = atStateData.getStateData();
 
-			QortalAtLoggerFactory loggerFactory = QortalAtLoggerFactory.getInstance();
-			byte[] dataBytes = MachineState.extractDataBytes(loggerFactory, stateData);
+			byte[] dataBytes = MachineState.extractDataBytes(stateData);
 
 			return dataBytes;
 		} catch (ApiException e) {
@@ -158,6 +155,52 @@ public class AtResource {
 		}
 	}
 
+	@POST
+	@Path("/create")
+	@Operation(
+			summary = "Create base58-encoded AT creation bytes from the provided parameters",
+			requestBody = @RequestBody(
+					required = true,
+					content = @Content(
+							mediaType = MediaType.APPLICATION_JSON,
+							schema = @Schema(
+									implementation = AtCreationRequest.class
+							)
+					)
+			),
+			responses = {
+					@ApiResponse(
+							description = "AT creation bytes suitable for use in a DEPLOY_AT transaction",
+							content = @Content(
+									mediaType = MediaType.TEXT_PLAIN,
+									schema = @Schema(
+											type = "string"
+									)
+							)
+					)
+			}
+	)
+	public String create(AtCreationRequest atCreationRequest) {
+		if (atCreationRequest.getCiyamAtVersion() < 2) {
+			throw ApiExceptionFactory.INSTANCE.createCustomException(request, ApiError.INVALID_CRITERIA, "ciyamAtVersion must be at least 2");
+		}
+		if (atCreationRequest.getCodeBytes() == null) {
+			throw ApiExceptionFactory.INSTANCE.createCustomException(request, ApiError.INVALID_CRITERIA, "Valid codeBytesBase64 must be supplied");
+		}
+		if (atCreationRequest.getDataBytes() == null) {
+			throw ApiExceptionFactory.INSTANCE.createCustomException(request, ApiError.INVALID_CRITERIA, "Valid dataBytesBase64 must be supplied");
+		}
+
+		byte[] creationBytes = MachineState.toCreationBytes(
+				atCreationRequest.getCiyamAtVersion(),
+				atCreationRequest.getCodeBytes(),
+				atCreationRequest.getDataBytes(),
+				atCreationRequest.getNumCallStackPages(),
+				atCreationRequest.getNumUserStackPages(),
+				atCreationRequest.getMinActivationAmount()
+		);
+		return Base58.encode(creationBytes);
+	}
 	@POST
 	@Operation(
 		summary = "Build raw, unsigned, DEPLOY_AT transaction",

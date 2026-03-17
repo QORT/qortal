@@ -1,12 +1,9 @@
 package org.qortal.transaction;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
 import org.qortal.account.PublicKeyAccount;
 import org.qortal.asset.Asset;
+import org.qortal.block.Block;
 import org.qortal.block.BlockChain;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.account.RewardShareData;
@@ -15,6 +12,10 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.transform.Transformer;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 public class RewardShareTransaction extends Transaction {
 
@@ -42,7 +43,7 @@ public class RewardShareTransaction extends Transaction {
 	}
 
 	private RewardShareData getExistingRewardShare() throws DataException {
-		if (this.haveCheckedForExistingRewardShare == false) {
+		if (!this.haveCheckedForExistingRewardShare) {
 			this.haveCheckedForExistingRewardShare = true;
 
 			// Look up any existing reward-share (using transaction's reward-share public key)
@@ -97,6 +98,14 @@ public class RewardShareTransaction extends Transaction {
 
 	@Override
 	public ValidationResult isValid() throws DataException {
+		final int disableRs = BlockChain.getInstance().getDisableRewardshareHeight();
+		final int enableRs = BlockChain.getInstance().getEnableRewardshareHeight();
+		int blockchainHeight = this.repository.getBlockRepository().getBlockchainHeight();
+
+		// Check if reward share is disabled.
+		if (blockchainHeight >= disableRs && blockchainHeight < enableRs)
+			return ValidationResult.GENERAL_TEMPORARY_DISABLED;
+
 		// Check reward share given to recipient. Negative is potentially OK to end a current reward-share. Zero also fine.
 		if (this.rewardShareTransactionData.getSharePercent() > MAX_SHARE)
 			return ValidationResult.INVALID_REWARD_SHARE_PERCENT;
@@ -114,7 +123,7 @@ public class RewardShareTransaction extends Transaction {
 		final boolean isCancellingSharePercent = this.rewardShareTransactionData.getSharePercent() < 0;
 
 		// Creator themselves needs to be allowed to mint (unless cancelling)
-		if (!isCancellingSharePercent && !creator.canMint())
+		if (!isCancellingSharePercent && !creator.canMint(false))
 			return ValidationResult.NOT_MINTING_ACCOUNT;
 
 		// Qortal: special rules in play depending whether recipient is also minter
@@ -136,12 +145,25 @@ public class RewardShareTransaction extends Transaction {
 
 			// Deleting a non-existent reward-share makes no sense
 			if (isCancellingSharePercent)
-				return ValidationResult.INVALID_REWARD_SHARE_PERCENT;
+				return ValidationResult.REWARD_SHARE_UNKNOWN;
 
 			// Check the minting account hasn't reach maximum number of reward-shares
 			int rewardShareCount = this.repository.getAccountRepository().countRewardShares(creator.getPublicKey());
-			if (rewardShareCount >= BlockChain.getInstance().getMaxRewardSharesPerMintingAccount())
+			int selfShareCount = this.repository.getAccountRepository().countSelfShares(creator.getPublicKey());
+
+			int maxRewardShares = BlockChain.getInstance().getMaxRewardSharesAtTimestamp(this.rewardShareTransactionData.getTimestamp());
+			if (creator.isFounder())
+				// Founders have a different limit
+				maxRewardShares = BlockChain.getInstance().getMaxRewardSharesPerFounderMintingAccount();
+
+			if (rewardShareCount >= maxRewardShares)
 				return ValidationResult.MAXIMUM_REWARD_SHARES;
+
+			// When filling all reward share slots, one must be a self share (after feature trigger timestamp)
+			if (this.rewardShareTransactionData.getTimestamp() >= BlockChain.getInstance().getRewardShareLimitTimestamp())
+				if (!isRecipientAlsoMinter && rewardShareCount == maxRewardShares-1 && selfShareCount == 0)
+					return ValidationResult.MAXIMUM_REWARD_SHARES;
+
 		} else {
 			// This transaction intends to modify/terminate an existing reward-share
 
@@ -150,13 +172,48 @@ public class RewardShareTransaction extends Transaction {
 				return ValidationResult.SELF_SHARE_EXISTS;
 		}
 
-		// Fee checking needed if not setting up new self-share
-		if (!(isRecipientAlsoMinter && existingRewardShareData == null))
-			// Check creator has enough funds
+		// Check creator has enough funds
+		if (this.rewardShareTransactionData.getTimestamp() >= BlockChain.getInstance().getFeeValidationFixTimestamp())
+			if (creator.getConfirmedBalance(Asset.QORT) < this.rewardShareTransactionData.getFee())
+				return ValidationResult.NO_BALANCE;
+
+		else if (!(isRecipientAlsoMinter && existingRewardShareData == null))
 			if (creator.getConfirmedBalance(Asset.QORT) < this.rewardShareTransactionData.getFee())
 				return ValidationResult.NO_BALANCE;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
+	public boolean isConfirmableAtHeight(int height) {
+		final int startV2 = BlockChain.getInstance().getSelfSponsorshipAlgoV2Height() - 15;
+		final int startV3 = BlockChain.getInstance().getSelfSponsorshipAlgoV3Height() - 15;
+		final int endV2 = BlockChain.getInstance().getSelfSponsorshipAlgoV2Height() + 10;
+		final int endV3 = BlockChain.getInstance().getSelfSponsorshipAlgoV3Height() + 10;
+
+		if (height >= BlockChain.getInstance().getUnconfirmableRewardSharesHeight()) {
+			// Not confirmable in online accounts or distribution blocks
+			if (Block.isOnlineAccountsBlock(height) || Block.isBatchRewardDistributionBlock(height)) {
+				return false;
+			}
+		}
+
+		if (height >= startV2 && height <= endV2) {
+			// Not confirmable on algo V2 run
+			return false;
+		}
+
+		if (height >= startV3 && height <= endV3) {
+			// Not confirmable on algo V3 run
+			return false;
+		}
+
+		return true;
 	}
 
 	@Override

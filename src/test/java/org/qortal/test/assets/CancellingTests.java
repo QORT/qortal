@@ -1,9 +1,5 @@
 package org.qortal.test.assets;
 
-import static org.junit.Assert.*;
-
-import java.util.Map;
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -16,6 +12,10 @@ import org.qortal.test.common.Common;
 import org.qortal.transaction.Transaction;
 import org.qortal.transaction.Transaction.ValidationResult;
 import org.qortal.utils.Amounts;
+
+import java.util.Map;
+
+import static org.junit.Assert.assertEquals;
 
 public class CancellingTests extends Common {
 

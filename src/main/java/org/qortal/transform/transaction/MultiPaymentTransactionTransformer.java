@@ -1,11 +1,7 @@
 package org.qortal.transform.transaction;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.List;
-
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
 import org.qortal.data.PaymentData;
 import org.qortal.data.transaction.BaseTransactionData;
 import org.qortal.data.transaction.MultiPaymentTransactionData;
@@ -15,8 +11,11 @@ import org.qortal.transform.PaymentTransformer;
 import org.qortal.transform.TransformationException;
 import org.qortal.utils.Serialization;
 
-import com.google.common.primitives.Ints;
-import com.google.common.primitives.Longs;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MultiPaymentTransactionTransformer extends TransactionTransformer {
 

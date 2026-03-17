@@ -4,27 +4,61 @@
 	"transactionExpiryPeriod": 86400000,
 	"maxBlockSize": 2097152,
 	"maxBytesPerUnitFee": 1024,
-	"unitFee": "0.1",
+	"unitFees": [
+		{ "timestamp": 0, "fee": "0.1" }
+	],
+	"nameRegistrationUnitFees": [
+		{ "timestamp": 0, "fee": "0.1" },
+		{ "timestamp": 1645372800000, "fee": "5" }
+	],
 	"requireGroupForApproval": false,
 	"minAccountLevelToRewardShare": 5,
-	"maxRewardSharesPerMintingAccount": 20,
+	"maxRewardSharesPerFounderMintingAccount": 6,
+	"maxRewardSharesByTimestamp": [
+		{ "timestamp": 0, "maxShares": 6 },
+		{ "timestamp": 9999999999999, "maxShares": 3 }
+	],
 	"founderEffectiveMintingLevel": 10,
 	"onlineAccountSignaturesMinLifetime": 3600000,
 	"onlineAccountSignaturesMaxLifetime": 86400000,
+	"onlineAccountsModulusV2Timestamp": 9999999999999,
+	"selfSponsorshipAlgoV1SnapshotTimestamp": 9999999999999,
+	"selfSponsorshipAlgoV2SnapshotTimestamp": 9999999999999,
+	"selfSponsorshipAlgoV3SnapshotTimestamp": 9999999999999,
+	"referenceTimestampBlock": 9999999999999,
+	"mempowTransactionUpdatesTimestamp": 0,
+	"blockRewardBatchStartHeight": 999999000,
+	"blockRewardBatchSize": 10,
+	"blockRewardBatchAccountsBlockCount": 3,
+	"mintingGroupIds": [
+		{ "height": 0, "ids": [ 1 ]}
+	],
 	"rewardsByHeight": [
 		{ "height": 1, "reward": 100 },
 		{ "height": 11, "reward": 10 },
 		{ "height": 21, "reward": 1 }
 	],
-	"sharesByLevel": [
-		{ "levels": [ 1, 2 ], "share": 0.05 },
-		{ "levels": [ 3, 4 ], "share": 0.10 },
-		{ "levels": [ 5, 6 ], "share": 0.15 },
-		{ "levels": [ 7, 8 ], "share": 0.20 },
-		{ "levels": [ 9, 10 ], "share": 0.25 }
+	"sharesByLevelV1": [
+		{ "id": 1, "levels": [ 1, 2 ], "share": 0.05 },
+		{ "id": 2, "levels": [ 3, 4 ], "share": 0.10 },
+		{ "id": 3, "levels": [ 5, 6 ], "share": 0.15 },
+		{ "id": 4, "levels": [ 7, 8 ], "share": 0.20 },
+		{ "id": 5, "levels": [ 9, 10 ], "share": 0.25 }
 	],
-	"qoraHoldersShare": 0.20,
+	"sharesByLevelV2": [
+		{ "id": 1, "levels": [ 1, 2 ], "share": 0.06 },
+		{ "id": 2, "levels": [ 3, 4 ], "share": 0.13 },
+		{ "id": 3, "levels": [ 5, 6 ], "share": 0.19 },
+		{ "id": 4, "levels": [ 7, 8 ], "share": 0.26 },
+		{ "id": 5, "levels": [ 9, 10 ], "share": 0.32 }
+	],
+	"qoraHoldersShareByHeight": [
+		{ "height": 1, "share": 0.20 },
+		{ "height": 1000000, "share": 0.01 }
+	],
 	"qoraPerQortReward": 250,
+	"minAccountsToActivateShareBin": 30,
+	"shareBinActivationMinLevel": 7,
 	"blocksNeededByLevel": [ 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 ],
 	"blockTimingsByHeight": [
 		{ "height": 1, "target": 60000, "deviation": 30000, "power": 0.2 }
@@ -44,7 +78,39 @@
 		"powfixTimestamp": 0,
 		"qortalTimestamp": 0,
 		"newAssetPricingTimestamp": 0,
-		"groupApprovalTimestamp": 0
+		"groupApprovalTimestamp": 0,
+		"atFindNextTransactionFix": 0,
+		"newBlockSigHeight": 999999,
+		"shareBinFix": 999999,
+		"sharesByLevelV2Height": 1000,
+		"rewardShareLimitTimestamp": 9999999999999,
+		"calcChainWeightTimestamp": 0,
+		"transactionV5Timestamp": 0,
+		"transactionV6Timestamp": 0,
+		"disableReferenceTimestamp": 9999999999999,
+		"increaseOnlineAccountsDifficultyTimestamp": 9999999999990,
+		"onlineAccountMinterLevelValidationHeight": 0,
+		"selfSponsorshipAlgoV1Height": 999999999,
+		"selfSponsorshipAlgoV2Height": 999999999,
+		"selfSponsorshipAlgoV3Height": 999999999,
+		"feeValidationFixTimestamp": 0,
+		"chatReferenceTimestamp": 0,
+		"arbitraryOptionalFeeTimestamp": 0,
+		"unconfirmableRewardSharesHeight": 99999999,
+		"disableTransferPrivsTimestamp": 9999999999500,
+		"enableTransferPrivsTimestamp": 9999999999950,
+		"cancelSellNameValidationTimestamp": 9999999999999,
+		"disableRewardshareHeight": 9999999999990,
+		"enableRewardshareHeight": 9999999999999,
+		"onlyMintWithNameHeight": 9999999999990,
+		"groupMemberCheckHeight": 9999999999999,
+		"decreaseOnlineAccountsDifficultyTimestamp": 9999999999999,
+		"removeOnlyMintWithNameHeight": 9999999999999,
+		"fixBatchRewardHeight": 9999999999999,
+		"adminsReplaceFoundersHeight": 9999999999999,
+		"ignoreLevelForRewardShareHeight": 9999999999999,
+		"nullGroupMembershipHeight": 20,
+		"adminQueryFixHeight": 9999999999999
 	},
 	"genesisInfo": {
 		"version": 4,

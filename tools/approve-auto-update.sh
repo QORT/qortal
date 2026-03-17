@@ -7,7 +7,7 @@ fi
 
 printf "Searching for auto-update transactions to approve...\n";
 
-tx=$( curl --silent --url "http://localhost:${port}/arbitrary/search?txGroupId=1&service=1&confirmationStatus=CONFIRMED&limit=1&reverse=true" );
+tx=$( curl --silent --url "http://localhost:${port}/arbitrary/search?txGroupId=1&service=AUTO_UPDATE&confirmationStatus=CONFIRMED&limit=1&reverse=true" );
 if fgrep --silent '"approvalStatus":"PENDING"' <<< "${tx}"; then
 	true
 else
@@ -50,7 +50,7 @@ tx_json=$( cat <<TX_END
 {
   "timestamp": ${timestamp},
   "reference": "${lastref}",
-  "fee": 0.001,
+  "fee": 0.01,
   "txGroupId": 0,
   "adminPublicKey": "${pubkey}",
   "pendingSignature": "${sig}",

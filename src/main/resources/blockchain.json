@@ -3,16 +3,44 @@
 	"transactionExpiryPeriod": 86400000,
 	"maxBlockSize": 2097152,
 	"maxBytesPerUnitFee": 1024,
-	"unitFee": "0.001",
+	"unitFees": [
+		{ "timestamp": 0, "fee": "0.001" },
+		{ "timestamp": 1692118800000, "fee": "0.01" }
+	],
+	"nameRegistrationUnitFees": [
+		{ "timestamp": 0, "fee": "0.001" },
+		{ "timestamp": 1645372800000, "fee": "5" },
+		{ "timestamp": 1651420800000, "fee": "1.25" }
+	],
 	"useBrokenMD160ForAddresses": false,
 	"requireGroupForApproval": false,
 	"defaultGroupId": 0,
 	"oneNamePerAccount": true,
+	"minAccountLevelToMint": 1,
+	"minAccountLevelForBlockSubmissions": 5,
 	"minAccountLevelToRewardShare": 5,
-	"maxRewardSharesPerMintingAccount": 6,
+	"maxRewardSharesPerFounderMintingAccount": 6,
+	"maxRewardSharesByTimestamp": [
+		{ "timestamp": 0, "maxShares": 6 },
+		{ "timestamp": 1657382400000, "maxShares": 3 },
+		{ "timestamp": 1698508800000, "maxShares": 2 }
+	],
 	"founderEffectiveMintingLevel": 10,
-	"onlineAccountSignaturesMinLifetime": 2592000000,
-	"onlineAccountSignaturesMaxLifetime": 3196800000,
+	"onlineAccountSignaturesMinLifetime": 43200000,
+	"onlineAccountSignaturesMaxLifetime": 86400000,
+	"onlineAccountsModulusV2Timestamp": 1659801600000,
+	"onlineAccountsModulusV3Timestamp": 1731961800000,
+	"selfSponsorshipAlgoV1SnapshotTimestamp": 1670230000000,
+	"selfSponsorshipAlgoV2SnapshotTimestamp": 1708360200000,
+	"selfSponsorshipAlgoV3SnapshotTimestamp": 1708432200000,
+	"referenceTimestampBlock": 1670684455220,
+	"mempowTransactionUpdatesTimestamp": 1693558800000,
+	"blockRewardBatchStartHeight": 1508000,
+	"blockRewardBatchSize": 1000,
+	"blockRewardBatchAccountsBlockCount": 25,
+	"mintingGroupIds": [
+		{ "height": 0, "ids": [ 694 ]}
+	],
 	"rewardsByHeight": [
 		{ "height": 1, "reward": 5.00 },
 		{ "height": 259201, "reward": 4.75 },
@@ -28,15 +56,27 @@
 		{ "height": 2851201, "reward": 2.25 },
 		{ "height": 3110401, "reward": 2.00 }
 	],
-	"sharesByLevel": [
-		{ "levels": [ 1, 2 ], "share": 0.05 },
-		{ "levels": [ 3, 4 ], "share": 0.10 },
-		{ "levels": [ 5, 6 ], "share": 0.15 },
-		{ "levels": [ 7, 8 ], "share": 0.20 },
-		{ "levels": [ 9, 10 ], "share": 0.25 }
+	"sharesByLevelV1": [
+		{ "id": 1, "levels": [ 1, 2 ], "share": 0.05 },
+		{ "id": 2, "levels": [ 3, 4 ], "share": 0.10 },
+		{ "id": 3, "levels": [ 5, 6 ], "share": 0.15 },
+		{ "id": 4, "levels": [ 7, 8 ], "share": 0.20 },
+		{ "id": 5, "levels": [ 9, 10 ], "share": 0.25 }
 	],
-	"qoraHoldersShare": 0.20,
+	"sharesByLevelV2": [
+		{ "id": 1, "levels": [ 1, 2 ], "share": 0.06 },
+		{ "id": 2, "levels": [ 3, 4 ], "share": 0.13 },
+		{ "id": 3, "levels": [ 5, 6 ], "share": 0.19 },
+		{ "id": 4, "levels": [ 7, 8 ], "share": 0.26 },
+		{ "id": 5, "levels": [ 9, 10 ], "share": 0.32 }
+	],
+	"qoraHoldersShareByHeight": [
+		{ "height": 1, "share": 0.20 },
+		{ "height": 1010000, "share": 0.01 }
+	],
 	"qoraPerQortReward": 250,
+	"minAccountsToActivateShareBin": 30,
+	"shareBinActivationMinLevel": 7,
 	"blocksNeededByLevel": [ 7200, 64800, 129600, 172800, 244000, 345600, 518400, 691200, 864000, 1036800 ],
 	"blockTimingsByHeight": [
 		{ "height": 1, "target": 60000, "deviation": 30000, "power": 0.2 }
@@ -48,7 +88,44 @@
 		"minutesPerBlock": 1
 	},
 	"featureTriggers": {
+		"atFindNextTransactionFix": 275000,
+		"newBlockSigHeight": 320000,
+		"shareBinFix": 399000,
+		"sharesByLevelV2Height": 1010000,
+		"rewardShareLimitTimestamp": 1657382400000,
+		"calcChainWeightTimestamp": 1620579600000,
+		"transactionV5Timestamp": 1642176000000,
+		"transactionV6Timestamp": 9999999999999,
+		"disableReferenceTimestamp": 1655222400000,
+		"increaseOnlineAccountsDifficultyTimestamp": 9999999999999,
+		"decreaseOnlineAccountsDifficultyTimestamp": 1731958200000,
+		"onlineAccountMinterLevelValidationHeight": 1092000,
+		"selfSponsorshipAlgoV1Height": 1092400,
+		"selfSponsorshipAlgoV2Height": 1611200,
+		"selfSponsorshipAlgoV3Height": 1612200,
+		"feeValidationFixTimestamp": 1671918000000,
+		"chatReferenceTimestamp": 1674316800000,
+		"arbitraryOptionalFeeTimestamp": 1680278400000,
+		"unconfirmableRewardSharesHeight": 1575500,
+		"disableTransferPrivsTimestamp": 1706745000000,
+		"enableTransferPrivsTimestamp": 1709251200000,
+		"cancelSellNameValidationTimestamp": 1676986362069,
+		"disableRewardshareHeight": 1899100,
+		"enableRewardshareHeight": 1905100,
+		"onlyMintWithNameHeight": 1900300,
+		"removeOnlyMintWithNameHeight": 1935500,
+		"groupMemberCheckHeight": 1902700,
+		"fixBatchRewardHeight": 1945900,
+		"adminsReplaceFoundersHeight": 2012800,
+		"nullGroupMembershipHeight": 2012800,
+		"ignoreLevelForRewardShareHeight": 2012800,
+		"adminQueryFixHeight": 2012800,
+		"multipleNamesPerAccountHeight": 2206300,
+		"mintedBlocksAdjustmentRemovalHeight": 2206300
 	},
+	"checkpoints": [
+		{ "height": 1136300, "signature": "3BbwawEF2uN8Ni5ofpJXkukoU8ctAPxYoFB7whq9pKfBnjfZcpfEJT4R95NvBDoTP8WDyWvsUvbfHbcr9qSZuYpSKZjUQTvdFf6eqznHGEwhZApWfvXu6zjGCxYCp65F4jsVYYJjkzbjmkCg5WAwN5voudngA23kMK6PpTNygapCzXt" }
+	],
 	"genesisInfo": {
 		"version": 4,
 		"timestamp": "1593450000000",

@@ -8,15 +8,18 @@ public class NamedThreadFactory implements ThreadFactory {
 
 	private final String name;
 	private final AtomicInteger threadNumber = new AtomicInteger(1);
+	private final int priority;
 
-	public NamedThreadFactory(String name) {
+	public NamedThreadFactory(String name, int priority) {
 		this.name = name;
+		this.priority = priority;
 	}
 
 	@Override
 	public Thread newThread(Runnable runnable) {
 		Thread thread = Executors.defaultThreadFactory().newThread(runnable);
 		thread.setName(this.name + "-" + this.threadNumber.getAndIncrement());
+		thread.setPriority(this.priority);
 
 		return thread;
 	}

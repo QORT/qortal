@@ -1,9 +1,9 @@
 package org.qortal.test;
 
-import static org.junit.Assert.*;
-
 import org.junit.Test;
 import org.qortal.utils.Amounts;
+
+import static org.junit.Assert.assertEquals;
 
 public class AmountsTests {
 

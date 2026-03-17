@@ -1,16 +1,15 @@
 package org.qortal.transform.transaction;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.ByteBuffer;
-
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
 import org.qortal.data.transaction.GenesisTransactionData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.transform.TransformationException;
 import org.qortal.utils.Serialization;
 
-import com.google.common.primitives.Ints;
-import com.google.common.primitives.Longs;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class GenesisTransactionTransformer extends TransactionTransformer {
 

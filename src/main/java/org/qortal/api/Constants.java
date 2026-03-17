@@ -4,8 +4,10 @@ import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.responses.ApiResponse;
-import static java.util.Arrays.asList;
+
 import java.util.List;
+
+import static java.util.Arrays.asList;
 
 class Constants {
 	public static final String APIERROR_CONTEXT_PATH = "/Api";

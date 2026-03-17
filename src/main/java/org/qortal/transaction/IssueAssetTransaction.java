@@ -1,8 +1,6 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
+import com.google.common.base.Utf8;
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.data.transaction.IssueAssetTransactionData;
@@ -12,7 +10,8 @@ import org.qortal.repository.Repository;
 import org.qortal.utils.Amounts;
 import org.qortal.utils.Unicode;
 
-import com.google.common.base.Utf8;
+import java.util.Collections;
+import java.util.List;
 
 public class IssueAssetTransaction extends Transaction {
 
@@ -90,6 +89,11 @@ public class IssueAssetTransaction extends Transaction {
 			return ValidationResult.ASSET_ALREADY_EXISTS;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

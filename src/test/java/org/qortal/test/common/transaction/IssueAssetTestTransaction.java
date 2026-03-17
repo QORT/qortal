@@ -1,13 +1,13 @@
 package org.qortal.test.common.transaction;
 
-import java.util.Random;
-
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.data.transaction.IssueAssetTransactionData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.test.common.AssetUtils;
+
+import java.util.Random;
 
 public class IssueAssetTestTransaction extends TestTransaction {
 

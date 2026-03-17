@@ -1,11 +1,11 @@
 package org.qortal.data.account;
 
 
+import org.qortal.utils.Amounts;
+
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
-
-import org.qortal.utils.Amounts;
 
 // All properties to be converted to JSON via JAXB
 @XmlAccessorType(XmlAccessType.FIELD)

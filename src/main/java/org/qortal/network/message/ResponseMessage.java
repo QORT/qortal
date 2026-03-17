@@ -1,27 +1,40 @@
 package org.qortal.network.message;
 
+import com.google.common.primitives.Ints;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-
-import com.google.common.primitives.Ints;
 
 public class ResponseMessage extends Message {
 
 	public static final int DATA_LENGTH = 32;
 
-	private final int nonce;
-	private final byte[] data;
+	private int nonce;
+	private byte[] data;
+
+	public ResponseMessage(int nonce, byte[] data) {
+		super(MessageType.RESPONSE);
+
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream(4 + DATA_LENGTH);
+
+		try {
+			bytes.write(Ints.toByteArray(nonce));
+
+			bytes.write(data);
+		} catch (IOException e) {
+			throw new AssertionError("IOException shouldn't occur with ByteArrayOutputStream");
+		}
+
+		this.dataBytes = bytes.toByteArray();
+		this.checksumBytes = Message.generateChecksum(this.dataBytes);
+	}
 
 	private ResponseMessage(int id, int nonce, byte[] data) {
 		super(id, MessageType.RESPONSE);
 
 		this.nonce = nonce;
 		this.data = data;
-	}
-
-	public ResponseMessage(int nonce, byte[] data) {
-		this(-1, nonce, data);
 	}
 
 	public int getNonce() {
@@ -39,17 +52,6 @@ public class ResponseMessage extends Message {
 		byteBuffer.get(data);
 
 		return new ResponseMessage(id, nonce, data);
-	}
-
-	@Override
-	protected byte[] toData() throws IOException {
-		ByteArrayOutputStream bytes = new ByteArrayOutputStream(4 + DATA_LENGTH);
-
-		bytes.write(Ints.toByteArray(this.nonce));
-
-		bytes.write(data);
-
-		return bytes.toByteArray();
 	}
 
 }

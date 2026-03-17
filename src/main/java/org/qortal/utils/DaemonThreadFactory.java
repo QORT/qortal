@@ -8,19 +8,22 @@ public class DaemonThreadFactory implements ThreadFactory {
 
 	private final String name;
 	private final AtomicInteger threadNumber = new AtomicInteger(1);
+	private int priority = Thread.NORM_PRIORITY;
 
-	public DaemonThreadFactory(String name) {
+	public DaemonThreadFactory(String name, int priority) {
 		this.name = name;
+		this.priority = priority;
 	}
 
-	public DaemonThreadFactory() {
-		this(null);
+	public DaemonThreadFactory(int priority) {
+		this(null, priority);;
 	}
 
 	@Override
 	public Thread newThread(Runnable runnable) {
 		Thread thread = Executors.defaultThreadFactory().newThread(runnable);
 		thread.setDaemon(true);
+		thread.setPriority(this.priority);
 
 		if (this.name != null)
 			thread.setName(this.name + "-" + this.threadNumber.getAndIncrement());

@@ -1,22 +1,28 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
 import org.qortal.account.PublicKeyAccount;
 import org.qortal.asset.Asset;
 import org.qortal.crypto.Crypto;
 import org.qortal.crypto.MemoryPoW;
+import org.qortal.data.naming.NameData;
 import org.qortal.data.transaction.ChatTransactionData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.group.Group;
 import org.qortal.repository.DataException;
 import org.qortal.repository.GroupRepository;
 import org.qortal.repository.Repository;
+import org.qortal.settings.Settings;
 import org.qortal.transform.TransformationException;
 import org.qortal.transform.transaction.ChatTransactionTransformer;
 import org.qortal.transform.transaction.TransactionTransformer;
+import org.qortal.utils.ListUtils;
+import org.qortal.utils.NTP;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.function.Predicate;
 
 public class ChatTransaction extends Transaction {
 
@@ -24,10 +30,11 @@ public class ChatTransaction extends Transaction {
 	private ChatTransactionData chatTransactionData;
 
 	// Other useful constants
-	public static final int MAX_DATA_SIZE = 256;
+	public static final int MAX_DATA_SIZE = 4000;
 	public static final int POW_BUFFER_SIZE = 8 * 1024 * 1024; // bytes
-	public static final int POW_DIFFICULTY_WITH_QORT = 8; // leading zero bits
-	public static final int POW_DIFFICULTY_NO_QORT = 14; // leading zero bits
+	public static final int POW_DIFFICULTY_ABOVE_QORT_THRESHOLD = 8; // leading zero bits
+	public static final int POW_DIFFICULTY_BELOW_QORT_THRESHOLD = 18; // leading zero bits
+	public static final long POW_QORT_THRESHOLD = 400000000L;
 
 	// Constructors
 
@@ -76,7 +83,7 @@ public class ChatTransaction extends Transaction {
 		// Clear nonce from transactionBytes
 		ChatTransactionTransformer.clearNonce(transactionBytes);
 
-		int difficulty = this.getSender().getConfirmedBalance(Asset.QORT) > 0 ? POW_DIFFICULTY_WITH_QORT : POW_DIFFICULTY_NO_QORT;
+		int difficulty = this.getSender().getConfirmedBalance(Asset.QORT) >= POW_QORT_THRESHOLD ? POW_DIFFICULTY_ABOVE_QORT_THRESHOLD : POW_DIFFICULTY_BELOW_QORT_THRESHOLD;
 
 		// Calculate nonce
 		this.chatTransactionData.setNonce(MemoryPoW.compute2(transactionBytes, POW_BUFFER_SIZE, difficulty));
@@ -135,13 +142,54 @@ public class ChatTransaction extends Transaction {
 	}
 
 	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
+	}
+
+	@Override
+	public boolean isConfirmable() {
+		// CHAT transactions can't go into blocks
+		return false;
+	}
+
+	@Override
 	public ValidationResult isValid() throws DataException {
 		// Nonce checking is done via isSignatureValid() as that method is only called once per import
+
+		// Disregard messages with timestamp too far in the future (we have stricter limits for CHAT transactions)
+		if (this.chatTransactionData.getTimestamp() > NTP.getTime() + (5 * 60 * 1000L)) {
+			return ValidationResult.TIMESTAMP_TOO_NEW;
+		}
+
+		// Check for blocked author by address
+		if (ListUtils.isAddressBlocked(this.chatTransactionData.getSender())) {
+			return ValidationResult.ADDRESS_BLOCKED;
+		}
+
+		// Check for blocked author by registered name
+		List<NameData> names = this.repository.getNameRepository().getNamesByOwner(this.chatTransactionData.getSender());
+		if (names != null && !names.isEmpty()) {
+			for (NameData nameData : names) {
+				if (nameData != null && nameData.getName() != null) {
+					if (ListUtils.isNameBlocked(nameData.getName())) {
+						return ValidationResult.NAME_BLOCKED;
+					}
+				}
+			}
+		}
+
+		PublicKeyAccount creator = this.getCreator();
+		if (creator == null)
+			return ValidationResult.MISSING_CREATOR;
+
+		// Reject if unconfirmed pile already has X recent CHAT transactions from same creator
+		if (countRecentChatTransactionsByCreator(creator) >= Settings.getInstance().getMaxRecentChatMessagesPerAccount())
+			return ValidationResult.TOO_MANY_UNCONFIRMED;
 
 		// If we exist in the repository then we've been imported as unconfirmed,
 		// but we don't want to make it into a block, so return fake non-OK result.
 		if (this.repository.getTransactionRepository().exists(this.chatTransactionData.getSignature()))
-			return ValidationResult.CHAT;
+			return ValidationResult.INVALID_BUT_OK;
 
 		// If we have a recipient, check it is a valid address
 		String recipientAddress = chatTransactionData.getRecipient();
@@ -179,13 +227,43 @@ public class ChatTransaction extends Transaction {
 
 		int difficulty;
 		try {
-			difficulty = this.getSender().getConfirmedBalance(Asset.QORT) > 0 ? POW_DIFFICULTY_WITH_QORT : POW_DIFFICULTY_NO_QORT;
+			difficulty = this.getSender().getConfirmedBalance(Asset.QORT) >= POW_QORT_THRESHOLD ? POW_DIFFICULTY_ABOVE_QORT_THRESHOLD : POW_DIFFICULTY_BELOW_QORT_THRESHOLD;
 		} catch (DataException e) {
 			return false;
 		}
 
 		// Check nonce
 		return MemoryPoW.verify2(transactionBytes, POW_BUFFER_SIZE, difficulty, nonce);
+	}
+
+	private int countRecentChatTransactionsByCreator(PublicKeyAccount creator) throws DataException {
+		List<TransactionData> unconfirmedTransactions = repository.getTransactionRepository().getUnconfirmedTransactions();
+		final Long now = NTP.getTime();
+		long recentThreshold = Settings.getInstance().getRecentChatMessagesMaxAge();
+
+		// We only care about chat transactions, and only those that are considered 'recent'
+		Predicate<TransactionData> hasSameCreatorAndIsRecentChat = transactionData -> {
+			if (transactionData.getType() != TransactionType.CHAT)
+				return false;
+
+			if (transactionData.getTimestamp() < now - recentThreshold)
+				return false;
+
+			return Arrays.equals(creator.getPublicKey(), transactionData.getCreatorPublicKey());
+		};
+
+		return (int) unconfirmedTransactions.stream().filter(hasSameCreatorAndIsRecentChat).count();
+	}
+
+
+	/**
+	 * Ensure there's at least a skeleton account so people
+	 * can retrieve sender's public key using address, even if all their messages
+	 * expire.
+	 */
+	@Override
+	protected void onImportAsUnconfirmed() throws DataException {
+		this.getCreator().ensureAccount();
 	}
 
 	@Override

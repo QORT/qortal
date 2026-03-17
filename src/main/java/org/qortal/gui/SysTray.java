@@ -1,40 +1,28 @@
 package org.qortal.gui;
 
-import java.awt.AWTError;
-import java.awt.AWTException;
-import java.awt.SystemTray;
-import java.awt.TrayIcon;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.qortal.controller.Controller;
+import org.qortal.globalization.Translator;
+import org.qortal.utils.URLViewer;
+
+import javax.swing.*;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
+import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowEvent;
 import java.awt.event.WindowFocusListener;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.InetSocketAddress;
 import java.net.URL;
-import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-
-import javax.swing.JDialog;
-import javax.swing.JMenuItem;
-import javax.swing.JPopupMenu;
-import javax.swing.SwingWorker;
-import javax.swing.event.PopupMenuEvent;
-import javax.swing.event.PopupMenuListener;
-
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.qortal.controller.Controller;
-import org.qortal.globalization.Translator;
-import org.qortal.settings.Settings;
-import org.qortal.utils.RandomizeList;
-import org.qortal.utils.URLViewer;
 
 public class SysTray {
 
@@ -61,7 +49,7 @@ public class SysTray {
 		this.popupMenu = createJPopupMenu();
 
 		// Build TrayIcon without AWT PopupMenu (which doesn't support Unicode)...
-		this.trayIcon = new TrayIcon(Gui.loadImage("icons/icon32.png"), "qortal", null);
+		this.trayIcon = new TrayIcon(Gui.loadImage("icons/qortal_ui_tray_synced.png"), "qortal", null);
 		// ...and attach mouse listener instead so we can use JPopupMenu (which does support Unicode)
 		this.trayIcon.addMouseListener(new MouseAdapter() {
 			@Override
@@ -147,14 +135,6 @@ public class SysTray {
 			}
 		});
 
-		JMenuItem openUi = new JMenuItem(Translator.INSTANCE.translate("SysTray", "OPEN_UI"));
-		openUi.addActionListener(actionEvent -> {
-			destroyHiddenDialog();
-
-			new OpenUiWorker().execute();
-		});
-		menu.add(openUi);
-
 		JMenuItem openTimeCheck = new JMenuItem(Translator.INSTANCE.translate("SysTray", "CHECK_TIME_ACCURACY"));
 		openTimeCheck.addActionListener(actionEvent -> {
 			destroyHiddenDialog();
@@ -178,6 +158,14 @@ public class SysTray {
 			menu.add(syncTime);
 		}
 
+		JMenuItem about = new JMenuItem(Translator.INSTANCE.translate("SysTray", "BUILD_VERSION"));
+		about.addActionListener(actionEvent -> {
+			destroyHiddenDialog();
+
+			JOptionPane.showMessageDialog(null,"Qortal Core\n" + Translator.INSTANCE.translate("SysTray", "BUILD_VERSION") + ":\n" + Controller.getInstance().getVersionStringWithoutPrefix(),"Qortal Core",1);
+		});
+		menu.add(about);
+
 		JMenuItem exit = new JMenuItem(Translator.INSTANCE.translate("SysTray", "EXIT"));
 		exit.addActionListener(actionEvent -> {
 			destroyHiddenDialog();
@@ -187,48 +175,6 @@ public class SysTray {
 		menu.add(exit);
 
 		return menu;
-	}
-
-	static class OpenUiWorker extends SwingWorker<Void, Void> {
-		@Override
-		protected Void doInBackground() {
-			List<String> uiServers = new ArrayList<>();
-
-			String[] remoteUiServers = Settings.getInstance().getRemoteUiServers();
-			uiServers.addAll(Arrays.asList(remoteUiServers));
-			// Randomize remote servers
-			uiServers = RandomizeList.randomize(uiServers);
-
-			// Prepend local servers
-			String[] localUiServers = Settings.getInstance().getLocalUiServers();
-			uiServers.addAll(0, Arrays.asList(localUiServers));
-
-			// Check each server in turn before opening browser tab
-			int uiPort = Settings.getInstance().getUiServerPort();
-			for (String uiServer : uiServers) {
-				InetSocketAddress socketAddress = new InetSocketAddress(uiServer, uiPort);
-
-				// If we couldn't resolve try next
-				if (socketAddress.isUnresolved())
-					continue;
-
-				try (SocketChannel socketChannel = SocketChannel.open()) {
-					socketChannel.socket().connect(socketAddress, 100);
-
-					// If we reach here, then socket connected to UI server!
-					URLViewer.openWebpage(new URL(String.format("http://%s:%d", uiServer, uiPort)));
-
-					return null;
-				} catch (IOException e) {
-					// try next server
-				} catch (Exception e) {
-					LOGGER.error("Unable to open UI website in browser");
-					return null;
-				}
-			}
-
-			return null;
-		}
 	}
 
 	static class SynchronizeClockWorker extends SwingWorker<Void, Void> {
@@ -287,6 +233,29 @@ public class SysTray {
 	public void setToolTipText(String text) {
 		if (trayIcon != null)
 			this.trayIcon.setToolTip(text);
+	}
+
+	public void setTrayIcon(int iconid) {
+		try {
+			if (trayIcon != null) {
+				switch (iconid) {
+					case 1:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_syncing_time-alt.png"));
+						break;
+					case 2:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_minting.png"));
+						break;
+					case 3:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_syncing.png"));
+						break;
+					case 4:
+						this.trayIcon.setImage(Gui.loadImage("icons/qortal_ui_tray_synced.png"));
+						break;
+				}
+			}
+		} catch (Exception e) {
+			LOGGER.info("Unable to set tray icon: {}", e.getMessage());
+		}
 	}
 
 	public void dispose() {

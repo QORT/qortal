@@ -1,12 +1,13 @@
 package org.qortal.test.apps;
 
-import java.security.Security;
-
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.jsse.provider.BouncyCastleJsseProvider;
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.account.PublicKeyAccount;
+import org.qortal.crypto.Crypto;
 import org.qortal.utils.Base58;
+
+import java.security.Security;
 
 public class RewardShareKeys {
 
@@ -28,7 +29,7 @@ public class RewardShareKeys {
 		PublicKeyAccount recipientAccount = new PublicKeyAccount(null, args.length > 1 ? Base58.decode(args[1]) : minterAccount.getPublicKey());
 
 		byte[] rewardSharePrivateKey = minterAccount.getRewardSharePrivateKey(recipientAccount.getPublicKey());
-		byte[] rewardSharePublicKey = PrivateKeyAccount.toPublicKey(rewardSharePrivateKey);
+		byte[] rewardSharePublicKey = Crypto.toPublicKey(rewardSharePrivateKey);
 
 		System.out.println(String.format("Minter account: %s", minterAccount.getAddress()));
 		System.out.println(String.format("Minter's public key: %s", Base58.encode(minterAccount.getPublicKey())));

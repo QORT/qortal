@@ -1,24 +1,32 @@
 package org.qortal.network.message;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.nio.ByteBuffer;
-
-import org.qortal.transform.Transformer;
+import com.google.common.primitives.Ints;
 import org.qortal.transform.block.BlockTransformer;
 
-import com.google.common.primitives.Ints;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class GetBlockSummariesMessage extends Message {
-
-	private static final int BLOCK_SIGNATURE_LENGTH = BlockTransformer.BLOCK_SIGNATURE_LENGTH;
 
 	private byte[] parentSignature;
 	private int numberRequested;
 
 	public GetBlockSummariesMessage(byte[] parentSignature, int numberRequested) {
-		this(-1, parentSignature, numberRequested);
+		super(MessageType.GET_BLOCK_SUMMARIES);
+
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+
+		try {
+			bytes.write(parentSignature);
+
+			bytes.write(Ints.toByteArray(numberRequested));
+		} catch (IOException e) {
+			throw new AssertionError("IOException shouldn't occur with ByteArrayOutputStream");
+		}
+
+		this.dataBytes = bytes.toByteArray();
+		this.checksumBytes = Message.generateChecksum(this.dataBytes);
 	}
 
 	private GetBlockSummariesMessage(int id, byte[] parentSignature, int numberRequested) {
@@ -36,31 +44,13 @@ public class GetBlockSummariesMessage extends Message {
 		return this.numberRequested;
 	}
 
-	public static Message fromByteBuffer(int id, ByteBuffer bytes) throws UnsupportedEncodingException {
-		if (bytes.remaining() != BLOCK_SIGNATURE_LENGTH + Transformer.INT_LENGTH)
-			return null;
-
-		byte[] parentSignature = new byte[BLOCK_SIGNATURE_LENGTH];
+	public static Message fromByteBuffer(int id, ByteBuffer bytes) {
+		byte[] parentSignature = new byte[BlockTransformer.BLOCK_SIGNATURE_LENGTH];
 		bytes.get(parentSignature);
 
 		int numberRequested = bytes.getInt();
 
 		return new GetBlockSummariesMessage(id, parentSignature, numberRequested);
-	}
-
-	@Override
-	protected byte[] toData() {
-		try {
-			ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-
-			bytes.write(this.parentSignature);
-
-			bytes.write(Ints.toByteArray(this.numberRequested));
-
-			return bytes.toByteArray();
-		} catch (IOException e) {
-			return null;
-		}
 	}
 
 }

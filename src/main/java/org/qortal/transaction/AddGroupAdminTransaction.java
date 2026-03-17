@@ -1,8 +1,5 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.crypto.Crypto;
@@ -11,6 +8,10 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.group.Group;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
 
 public class AddGroupAdminTransaction extends Transaction {
 
@@ -64,13 +65,22 @@ public class AddGroupAdminTransaction extends Transaction {
 
 		Account owner = getOwner();
 		String groupOwner = this.repository.getGroupRepository().getOwner(groupId);
+		boolean groupOwnedByNullAccount = Objects.equals(groupOwner, Group.NULL_OWNER_ADDRESS);
 
-		// Check transaction's public key matches group's current owner
-		if (!owner.getAddress().equals(groupOwner))
+		// Require approval if transaction relates to a group owned by the null account
+		if (groupOwnedByNullAccount && !this.needsGroupApproval())
+			return ValidationResult.GROUP_APPROVAL_REQUIRED;
+
+		// Check transaction's public key matches group's current owner (except for groups owned by the null account)
+		if (!groupOwnedByNullAccount && !owner.getAddress().equals(groupOwner))
 			return ValidationResult.INVALID_GROUP_OWNER;
 
 		// Check address is a group member
 		if (!this.repository.getGroupRepository().memberExists(groupId, memberAddress))
+			return ValidationResult.NOT_GROUP_MEMBER;
+
+		// Check transaction creator is a group member
+		if (!this.repository.getGroupRepository().memberExists(groupId, this.getCreator().getAddress()))
 			return ValidationResult.NOT_GROUP_MEMBER;
 
 		// Check group member is not already an admin
@@ -82,6 +92,11 @@ public class AddGroupAdminTransaction extends Transaction {
 			return ValidationResult.NO_BALANCE;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

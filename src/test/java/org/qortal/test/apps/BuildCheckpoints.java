@@ -1,24 +1,15 @@
 package org.qortal.test.apps;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.OutputStreamWriter;
-import java.io.PrintWriter;
+import org.bitcoinj.core.*;
+import org.bitcoinj.params.RegTestParams;
+import org.bitcoinj.store.BlockStore;
+import org.bitcoinj.store.MemoryBlockStore;
+
+import java.io.*;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.TreeMap;
-
-import org.bitcoinj.core.BlockChain;
-import org.bitcoinj.core.CheckpointManager;
-import org.bitcoinj.core.NetworkParameters;
-import org.bitcoinj.core.PeerAddress;
-import org.bitcoinj.core.PeerGroup;
-import org.bitcoinj.core.StoredBlock;
-import org.bitcoinj.params.RegTestParams;
-import org.bitcoinj.store.BlockStore;
-import org.bitcoinj.store.MemoryBlockStore;
 
 public class BuildCheckpoints {
 

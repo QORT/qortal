@@ -1,14 +1,14 @@
 package org.qortal.repository.hsqldb;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.List;
-
 import org.qortal.data.network.PeerData;
 import org.qortal.network.PeerAddress;
 import org.qortal.repository.DataException;
 import org.qortal.repository.NetworkRepository;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 
 public class HSQLDBNetworkRepository implements NetworkRepository {
 
