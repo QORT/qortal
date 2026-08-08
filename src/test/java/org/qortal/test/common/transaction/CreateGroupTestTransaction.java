@@ -1,13 +1,13 @@
 package org.qortal.test.common.transaction;
 
-import java.util.Random;
-
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.data.transaction.CreateGroupTransactionData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.group.Group.ApprovalThreshold;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.Random;
 
 public class CreateGroupTestTransaction extends TestTransaction {
 

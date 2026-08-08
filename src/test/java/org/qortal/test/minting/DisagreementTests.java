@@ -1,17 +1,12 @@
 package org.qortal.test.minting;
 
-import static org.junit.Assert.*;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-
+import io.druid.extendedset.intset.ConciseSet;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.qortal.account.PrivateKeyAccount;
-import org.qortal.block.BlockMinter;
-import org.qortal.controller.Controller;
+import org.qortal.controller.BlockMinter;
+import org.qortal.controller.OnlineAccountsManager;
 import org.qortal.data.account.RewardShareData;
 import org.qortal.data.block.BlockData;
 import org.qortal.data.transaction.TransactionData;
@@ -25,7 +20,11 @@ import org.qortal.test.common.TransactionUtils;
 import org.qortal.transform.block.BlockTransformer;
 import org.roaringbitmap.IntIterator;
 
-import io.druid.extendedset.intset.ConciseSet;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+import static org.junit.Assert.*;
 
 public class DisagreementTests extends Common {
 
@@ -73,7 +72,7 @@ public class DisagreementTests extends Common {
 			assertNotNull(testRewardShareData);
 
 			// Create signed timestamps
-			Controller.getInstance().ensureTestingAccountsOnline(mintingAccount, testRewardShareAccount);
+			OnlineAccountsManager.getInstance().ensureTestingAccountsOnline(mintingAccount, testRewardShareAccount);
 
 			// Mint another block
 			BlockMinter.mintTestingBlockRetainingTimestamps(repository, mintingAccount);

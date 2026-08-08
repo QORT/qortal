@@ -1,10 +1,18 @@
 package org.qortal.data.chat;
 
+import org.bouncycastle.util.encoders.Base64;
+import org.qortal.utils.Base58;
+
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 
 @XmlAccessorType(XmlAccessType.FIELD)
 public class ChatMessage {
+
+	public enum Encoding {
+		BASE58,
+		BASE64
+	}
 
 	// Properties
 
@@ -27,7 +35,11 @@ public class ChatMessage {
 
 	private String recipientName;
 
-	private byte[] data;
+	private byte[] chatReference;
+
+	private Encoding encoding;
+
+	private String data;
 
 	private boolean isText;
 	private boolean isEncrypted;
@@ -42,8 +54,8 @@ public class ChatMessage {
 
 	// For repository use
 	public ChatMessage(long timestamp, int txGroupId, byte[] reference, byte[] senderPublicKey, String sender,
-			String senderName, String recipient, String recipientName, byte[] data, boolean isText,
-			boolean isEncrypted, byte[] signature) {
+					   String senderName, String recipient, String recipientName, byte[] chatReference,
+					   Encoding encoding, byte[] data, boolean isText, boolean isEncrypted, byte[] signature) {
 		this.timestamp = timestamp;
 		this.txGroupId = txGroupId;
 		this.reference = reference;
@@ -52,7 +64,25 @@ public class ChatMessage {
 		this.senderName = senderName;
 		this.recipient = recipient;
 		this.recipientName = recipientName;
-		this.data = data;
+		this.chatReference = chatReference;
+		this.encoding = encoding != null ? encoding : Encoding.BASE58;
+
+		if (data != null) {
+			switch (this.encoding) {
+				case BASE64:
+					this.data = Base64.toBase64String(data);
+					break;
+
+				case BASE58:
+				default:
+					this.data = Base58.encode(data);
+					break;
+			}
+		}
+		else {
+			this.data = null;
+		}
+
 		this.isText = isText;
 		this.isEncrypted = isEncrypted;
 		this.signature = signature;
@@ -90,7 +120,11 @@ public class ChatMessage {
 		return this.recipientName;
 	}
 
-	public byte[] getData() {
+	public byte[] getChatReference() {
+		return this.chatReference;
+	}
+
+	public String getData() {
 		return this.data;
 	}
 

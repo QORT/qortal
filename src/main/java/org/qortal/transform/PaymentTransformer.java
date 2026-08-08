@@ -1,13 +1,12 @@
 package org.qortal.transform;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.ByteBuffer;
-
+import com.google.common.primitives.Longs;
 import org.qortal.data.PaymentData;
 import org.qortal.utils.Serialization;
 
-import com.google.common.primitives.Longs;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class PaymentTransformer extends Transformer {
 

@@ -1,14 +1,11 @@
 package org.qortal.test;
 
-import static org.junit.Assert.*;
-
-import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
-
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 import org.qortal.account.Account;
 import org.qortal.block.Block;
+import org.qortal.block.BlockChain;
 import org.qortal.data.block.BlockSummaryData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
@@ -17,12 +14,27 @@ import org.qortal.test.common.Common;
 import org.qortal.test.common.TestAccount;
 import org.qortal.transform.Transformer;
 import org.qortal.transform.block.BlockTransformer;
-import org.junit.Before;
-import org.junit.Test;
+import org.qortal.utils.NTP;
+
+import java.math.BigInteger;
+import java.text.DecimalFormat;
+import java.text.NumberFormat;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+import static org.junit.Assert.*;
 
 public class ChainWeightTests extends Common {
 
 	private static final Random RANDOM = new Random();
+	private static final NumberFormat FORMATTER = new DecimalFormat("0.###E0");
+
+	@BeforeClass
+	public static void beforeClass() {
+		// We need this so that NTP.getTime() in Block.calcChainWeight() doesn't return null, causing NPE
+		NTP.setFixedOffset(0L);
+	}
 
 	@Before
 	public void beforeTest() throws DataException {
@@ -89,7 +101,97 @@ public class ChainWeightTests extends Common {
 		}
 	}
 
-	// Check that a longer chain beats a shorter chain
+	// Demonstrates that typical key distance ranges from roughly 1E75 to 1E77
+	@Test
+	public void testKeyDistances() {
+		byte[] parentMinterKey = new byte[Transformer.PUBLIC_KEY_LENGTH];
+		byte[] testKey = new byte[Transformer.PUBLIC_KEY_LENGTH];
+
+		for (int i = 0; i < 50; ++i) {
+			int parentHeight = RANDOM.nextInt(50000);
+			RANDOM.nextBytes(parentMinterKey);
+			RANDOM.nextBytes(testKey);
+			int minterLevel = RANDOM.nextInt(10) + 1;
+
+			BigInteger keyDistance = Block.calcKeyDistance(parentHeight, parentMinterKey, testKey, minterLevel);
+
+			System.out.println(String.format("Parent height: %d, minter level: %d, distance: %s",
+					parentHeight,
+					minterLevel,
+					FORMATTER.format(keyDistance)));
+		}
+	}
+
+	// If typical key distance ranges from 1E75 to 1E77
+	// then we want lots of online accounts to push a 1E75 distance
+	// towards 1E77 so that it competes with a 1E77 key that has hardly any online accounts
+	// 1E75 is approx. 2**249 so maybe that's a good value for Block.ACCOUNTS_COUNT_SHIFT
+	@Test
+	public void testMoreAccountsVersusKeyDistance() throws DataException {
+		BigInteger minimumBetterKeyDistance = BigInteger.TEN.pow(77);
+		BigInteger maximumWorseKeyDistance = BigInteger.TEN.pow(75);
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			final byte[] parentMinterKey = new byte[Transformer.PUBLIC_KEY_LENGTH];
+
+			TestAccount betterAccount = Common.getTestAccount(repository, "bob-reward-share");
+			byte[] betterKey = betterAccount.getPublicKey();
+			int betterMinterLevel = Account.getRewardShareEffectiveMintingLevel(repository, betterKey);
+
+			TestAccount worseAccount = Common.getTestAccount(repository, "dilbert-reward-share");
+			byte[] worseKey = worseAccount.getPublicKey();
+			int worseMinterLevel = Account.getRewardShareEffectiveMintingLevel(repository, worseKey);
+
+			// This is to check that the hard-coded keys ARE actually better/worse as expected, before moving on testing more online accounts
+			BigInteger betterKeyDistance;
+			BigInteger worseKeyDistance;
+
+			int parentHeight = 0;
+			do {
+				++parentHeight;
+				betterKeyDistance = Block.calcKeyDistance(parentHeight, parentMinterKey, betterKey, betterMinterLevel);
+				worseKeyDistance = Block.calcKeyDistance(parentHeight, parentMinterKey, worseKey, worseMinterLevel);
+			} while (betterKeyDistance.compareTo(minimumBetterKeyDistance) < 0 || worseKeyDistance.compareTo(maximumWorseKeyDistance) > 0);
+
+			System.out.println(String.format("Parent height: %d, better key distance: %s, worse key distance: %s",
+					parentHeight,
+					FORMATTER.format(betterKeyDistance),
+					FORMATTER.format(worseKeyDistance)));
+
+			for (int accountsCountShift = 244; accountsCountShift <= 256; accountsCountShift += 2) {
+				for (int worseAccountsCount = 1; worseAccountsCount <= 101; worseAccountsCount += 25) {
+					for (int betterAccountsCount = 1; betterAccountsCount <= 1001; betterAccountsCount += 250) {
+						BlockSummaryData worseKeyBlockSummary = new BlockSummaryData(parentHeight + 1, null, worseKey, betterAccountsCount);
+						BlockSummaryData betterKeyBlockSummary = new BlockSummaryData(parentHeight + 1, null, betterKey, worseAccountsCount);
+
+						populateBlockSummaryMinterLevel(repository, worseKeyBlockSummary);
+						populateBlockSummaryMinterLevel(repository, betterKeyBlockSummary);
+
+						BigInteger worseKeyBlockWeight = calcBlockWeight(parentHeight, parentMinterKey, worseKeyBlockSummary, accountsCountShift);
+						BigInteger betterKeyBlockWeight = calcBlockWeight(parentHeight, parentMinterKey, betterKeyBlockSummary, accountsCountShift);
+
+						System.out.println(String.format("Shift: %d, worse key: %d accounts, %s diff; better key: %d accounts: %s diff; winner: %s",
+								accountsCountShift,
+								betterAccountsCount, // used with worseKey
+								FORMATTER.format(worseKeyBlockWeight),
+								worseAccountsCount, // used with betterKey
+								FORMATTER.format(betterKeyBlockWeight),
+								worseKeyBlockWeight.compareTo(betterKeyBlockWeight) > 0 ? "worse key/better accounts" : "better key/worse accounts"
+								));
+					}
+				}
+
+				System.out.println();
+			}
+		}
+	}
+
+	private static BigInteger calcBlockWeight(int parentHeight, byte[] parentBlockSignature, BlockSummaryData blockSummaryData, int accountsCountShift) {
+		BigInteger keyDistance = Block.calcKeyDistance(parentHeight, parentBlockSignature, blockSummaryData.getMinterPublicKey(), blockSummaryData.getMinterLevel());
+		return BigInteger.valueOf(blockSummaryData.getOnlineAccountsCount()).shiftLeft(accountsCountShift).add(keyDistance);
+	}
+
+	// Check that a longer chain has same weight as shorter/truncated chain
 	@Test
 	public void testLongerChain() throws DataException {
 		try (final Repository repository = RepositoryManager.getRepository()) {
@@ -97,16 +199,20 @@ public class ChainWeightTests extends Common {
 			BlockSummaryData commonBlockSummary = genBlockSummary(repository, commonBlockHeight);
 			byte[] commonBlockGeneratorKey = commonBlockSummary.getMinterPublicKey();
 
-			List<BlockSummaryData> shorterChain = genBlockSummaries(repository, 3, commonBlockSummary);
-			List<BlockSummaryData> longerChain = genBlockSummaries(repository, shorterChain.size() + 1, commonBlockSummary);
-
-			populateBlockSummariesMinterLevels(repository, shorterChain);
+			List<BlockSummaryData> longerChain = genBlockSummaries(repository, 6, commonBlockSummary);
 			populateBlockSummariesMinterLevels(repository, longerChain);
 
-			BigInteger shorterChainWeight = Block.calcChainWeight(commonBlockHeight, commonBlockGeneratorKey, shorterChain);
-			BigInteger longerChainWeight = Block.calcChainWeight(commonBlockHeight, commonBlockGeneratorKey, longerChain);
+			List<BlockSummaryData> shorterChain = longerChain.subList(0, longerChain.size() / 2);
 
-			assertEquals("longer chain should have greater weight", 1, longerChainWeight.compareTo(shorterChainWeight));
+			final int mutualHeight = commonBlockHeight - 1 + Math.min(shorterChain.size(), longerChain.size());
+
+			BigInteger shorterChainWeight = Block.calcChainWeight(commonBlockHeight, commonBlockGeneratorKey, shorterChain, mutualHeight);
+			BigInteger longerChainWeight = Block.calcChainWeight(commonBlockHeight, commonBlockGeneratorKey, longerChain, mutualHeight);
+
+			if (NTP.getTime() >= BlockChain.getInstance().getCalcChainWeightTimestamp())
+				assertEquals("longer chain should have same weight", 0, longerChainWeight.compareTo(shorterChainWeight));
+			else
+				assertEquals("longer chain should have greater weight", 1, longerChainWeight.compareTo(shorterChainWeight));
 		}
 	}
 

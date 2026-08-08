@@ -23,9 +23,9 @@ import org.qortal.transaction.Transaction.ApprovalStatus;
 import org.qortal.transaction.Transaction.ValidationResult;
 import org.qortal.utils.Amounts;
 
-import static org.junit.Assert.*;
-
 import java.util.Arrays;
+
+import static org.junit.Assert.*;
 
 public class GroupApprovalTests extends Common {
 

@@ -1,5 +1,4 @@
 package org.qortal.test.apps;
-import java.security.Security;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.qortal.block.BlockChain;
@@ -9,6 +8,8 @@ import org.qortal.repository.RepositoryFactory;
 import org.qortal.repository.RepositoryManager;
 import org.qortal.repository.hsqldb.HSQLDBRepositoryFactory;
 import org.qortal.settings.Settings;
+
+import java.security.Security;
 
 public class orphan {
 

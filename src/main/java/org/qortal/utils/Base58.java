@@ -111,7 +111,7 @@ public class Base58 {
         //
         // Nothing to do if we have an empty string
         //
-        if (string.length() == 0)
+        if (string.isEmpty())
             return null;
         //
         // Convert the input string to a byte sequence

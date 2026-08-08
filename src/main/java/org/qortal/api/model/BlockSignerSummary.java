@@ -1,9 +1,9 @@
 package org.qortal.api.model;
 
+import org.qortal.crypto.Crypto;
+
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
-
-import org.qortal.crypto.Crypto;
 
 @XmlAccessorType(XmlAccessType.FIELD)
 public class BlockSignerSummary {

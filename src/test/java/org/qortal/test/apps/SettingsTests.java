@@ -1,19 +1,18 @@
 package org.qortal.test.apps;
 
-import java.io.FileReader;
-import java.io.IOException;
-import java.io.Reader;
-
-import javax.xml.bind.JAXBContext;
-import javax.xml.bind.JAXBException;
-import javax.xml.bind.Unmarshaller;
-import javax.xml.transform.stream.StreamSource;
-
 import org.eclipse.persistence.jaxb.JAXBContextFactory;
 import org.eclipse.persistence.jaxb.UnmarshallerProperties;
 import org.qortal.block.BlockChain;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.settings.Settings;
+
+import javax.xml.bind.JAXBContext;
+import javax.xml.bind.JAXBException;
+import javax.xml.bind.Unmarshaller;
+import javax.xml.transform.stream.StreamSource;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.Reader;
 
 public class SettingsTests {
 

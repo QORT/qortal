@@ -1,12 +1,11 @@
 package org.qortal.data.group;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+import org.qortal.group.Group.ApprovalThreshold;
+
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlTransient;
-
-import org.qortal.group.Group.ApprovalThreshold;
-
-import io.swagger.v3.oas.annotations.media.Schema;
 
 // All properties to be converted to JSON via JAX-RS
 @XmlAccessorType(XmlAccessType.FIELD)
@@ -23,6 +22,7 @@ public class GroupData {
 	private ApprovalThreshold approvalThreshold;
 	private int minimumBlockDelay;
 	private int maximumBlockDelay;
+	public int memberCount;
 
 	/** Reference to CREATE_GROUP or UPDATE_GROUP transaction, used to rebuild group during orphaning. */
 	// No need to ever expose this via API
@@ -42,6 +42,9 @@ public class GroupData {
 
 	// We abuse GroupData for API purposes by adding this unrelated field. Not always present.
 	private Boolean isAdmin;
+
+	/** Owner's primary registered name. API-only, not always present. */
+	private String ownerPrimaryName;
 
 	// Constructors
 
@@ -170,6 +173,14 @@ public class GroupData {
 
 	public void setIsAdmin(boolean isAdmin) {
 		this.isAdmin = isAdmin;
+	}
+
+	public String getOwnerPrimaryName() {
+		return this.ownerPrimaryName;
+	}
+
+	public void setOwnerPrimaryName(String ownerPrimaryName) {
+		this.ownerPrimaryName = ownerPrimaryName;
 	}
 
 }

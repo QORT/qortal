@@ -1,10 +1,10 @@
 package org.qortal.api.model;
 
+import org.qortal.data.naming.NameData;
+
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlElement;
-
-import org.qortal.data.naming.NameData;
 
 @XmlAccessorType(XmlAccessType.NONE)
 public class NameSummary {

@@ -1,14 +1,13 @@
 package org.qortal.data.transaction;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+import org.qortal.transaction.Transaction.TransactionType;
+import org.qortal.utils.Unicode;
+
 import javax.xml.bind.Unmarshaller;
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlTransient;
-
-import org.qortal.transaction.Transaction.TransactionType;
-import org.qortal.utils.Unicode;
-
-import io.swagger.v3.oas.annotations.media.Schema;
 
 // All properties to be converted to JSON via JAXB
 @XmlAccessorType(XmlAccessType.FIELD)
@@ -26,7 +25,7 @@ public class UpdateNameTransactionData extends TransactionData {
 	@Schema(description = "new name", example = "my-new-name")
 	private String newName;
 
-	@Schema(description = "replacement simple name-related info in JSON format", example = "{ \"age\": 30 }")
+	@Schema(description = "replacement simple name-related info in JSON or text format", example = "Registered Name on the Qortal Chain")
 	private String newData;
 
 	// For internal use
@@ -48,6 +47,7 @@ public class UpdateNameTransactionData extends TransactionData {
 
 	public void afterUnmarshal(Unmarshaller u, Object parent) {
 		this.creatorPublicKey = this.ownerPublicKey;
+		this.reducedNewName = this.newName != null ? Unicode.sanitize(this.newName) : null;
 	}
 
 	/** From repository */
@@ -62,7 +62,7 @@ public class UpdateNameTransactionData extends TransactionData {
 		this.nameReference = nameReference;
 	}
 
-	/** From network/API */
+	/** From network */
 	public UpdateNameTransactionData(BaseTransactionData baseTransactionData, String name, String newName, String newData) {
 		this(baseTransactionData, name, newName, newData, Unicode.sanitize(newName), null);
 	}

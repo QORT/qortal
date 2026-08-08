@@ -1,20 +1,6 @@
 package org.qortal.controller;
 
-import java.awt.TrayIcon.MessageType;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.lang.management.ManagementFactory;
-import java.nio.ByteBuffer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-
+import com.google.common.hash.HashCode;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.qortal.ApplyUpdate;
@@ -31,7 +17,24 @@ import org.qortal.transaction.ArbitraryTransaction;
 import org.qortal.transaction.Transaction.TransactionType;
 import org.qortal.transform.Transformer;
 
-import com.google.common.hash.HashCode;
+import java.awt.TrayIcon.MessageType;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.management.ManagementFactory;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 
 /* NOTE: It is CRITICAL that we use OpenJDK and not Java SE because our uber jar repacks BouncyCastle which, in turn, unsigns BC causing it to be rejected as a security provider by Java SE. */
 
@@ -39,6 +42,7 @@ public class AutoUpdate extends Thread {
 
 	public static final String JAR_FILENAME = "qortal.jar";
 	public static final String NEW_JAR_FILENAME = "new-" + JAR_FILENAME;
+	public static final String AGENTLIB_JVM_HOLDER_ARG = "-DQORTAL_agentlib=";
 
 	private static final Logger LOGGER = LogManager.getLogger(AutoUpdate.class);
 	private static final long CHECK_INTERVAL = 20 * 60 * 1000L; // ms
@@ -214,56 +218,154 @@ public class AutoUpdate extends Thread {
 			return false; // failed - try another repo
 		}
 
-		// Give repository a chance to backup in case things go badly wrong
-		RepositoryManager.backup(true);
+		// Give repository a chance to backup in case things go badly wrong (if enabled)
+		if (Settings.getInstance().getRepositoryBackupInterval() > 0) {
+			try {
+				// Timeout if the database isn't ready for backing up after 60 seconds
+				long timeout = 60 * 1000L;
+				RepositoryManager.backup(true, "backup", timeout);
+
+			} catch (TimeoutException e) {
+				LOGGER.info("Attempt to backup repository failed due to timeout: {}", e.getMessage());
+				// Continue with the auto update anyway...
+			}
+		}
 
 		// Call ApplyUpdate to end this process (unlocking current JAR so it can be replaced)
 		String javaHome = System.getProperty("java.home");
-		LOGGER.debug(String.format("Java home: %s", javaHome));
-
 		Path javaBinary = Paths.get(javaHome, "bin", "java");
-		LOGGER.debug(String.format("Java binary: %s", javaBinary));
+		Path javaSpawnHelper = Paths.get(javaHome, "lib", "jspawnhelper");
+		Path newJarAbsolute = newJar.toAbsolutePath();
+		String[] savedArgs = Controller.getInstance().getSavedArgs();
+
+		SysTray.getInstance().showMessage(Translator.INSTANCE.translate("SysTray", "AUTO_UPDATE"),
+				Translator.INSTANCE.translate("SysTray", "APPLYING_UPDATE_AND_RESTARTING"),
+				MessageType.INFO);
+
+		List<String> javaCandidates = buildJavaCandidates(javaBinary);
+		List<String> runtimeInputArgs = ManagementFactory.getRuntimeMXBean().getInputArguments();
+		Exception lastException = null;
+		int attempt = 0;
+
+		// Try full JVM args first, then retry with a minimal command line.
+		for (boolean includeJvmArgs : new boolean[]{true, false}) {
+				for (String javaCandidate : javaCandidates) {
+					attempt++;
+					List<String> javaCmd = buildApplyUpdateCommand(javaCandidate, includeJvmArgs, runtimeInputArgs, savedArgs, newJarAbsolute);
+					LOGGER.info("Applying update attempt {} (jvmArgs={}, java={}): {}", attempt, includeJvmArgs, javaCandidate, String.join(" ", javaCmd));
+
+				try {
+					startApplyUpdateProcess(javaCmd);
+					return true; // applying update OK
+				} catch (Exception e) {
+					lastException = e;
+					LOGGER.error("Failed to apply update attempt {} (jvmArgs={}, java={}): {}", attempt, includeJvmArgs, javaCandidate, e.getMessage(), e);
+				}
+			}
+		}
+
+		logLaunchDiagnostics(javaHome, javaBinary, javaSpawnHelper, newJarAbsolute, javaCandidates, attempt, lastException);
 
 		try {
-			List<String> javaCmd = new ArrayList<>();
-			// Java runtime binary itself
-			javaCmd.add(javaBinary.toString());
+			Files.deleteIfExists(newJar);
+		} catch (IOException de) {
+			LOGGER.warn(String.format("Failed to delete update download: %s", de.getMessage()));
+		}
 
-			// JVM arguments
-			javaCmd.addAll(ManagementFactory.getRuntimeMXBean().getInputArguments());
+		return false; // failed - allow retries/repo fallback
+	}
 
-			// Remove JNI options as they won't be supported by command-line 'java'
-			// These are typically added by the AdvancedInstaller Java launcher EXE
-			javaCmd.removeAll(Arrays.asList("abort", "exit", "vfprintf"));
+	static List<String> buildJavaCandidates(Path javaBinary) {
+		LinkedHashSet<String> candidates = new LinkedHashSet<>();
+		candidates.add(javaBinary.toString());
 
-			// Call ApplyUpdate using new JAR
-			javaCmd.addAll(Arrays.asList("-cp", NEW_JAR_FILENAME, ApplyUpdate.class.getCanonicalName()));
-
-			// Add command-line args saved from start-up
-			String[] savedArgs = Controller.getInstance().getSavedArgs();
-			if (savedArgs != null)
-				javaCmd.addAll(Arrays.asList(savedArgs));
-
-			LOGGER.info(String.format("Applying update with: %s", String.join(" ", javaCmd)));
-
-			SysTray.getInstance().showMessage(Translator.INSTANCE.translate("SysTray", "AUTO_UPDATE"),
-					Translator.INSTANCE.translate("SysTray", "APPLYING_UPDATE_AND_RESTARTING"),
-					MessageType.INFO);
-
-			new ProcessBuilder(javaCmd).start();
-
-			return true; // applying update OK
+		try {
+			candidates.add(javaBinary.toRealPath().toString());
 		} catch (IOException e) {
-			LOGGER.error(String.format("Failed to apply update: %s", e.getMessage()));
+			// ignore
+		}
 
-			try {
-				Files.deleteIfExists(newJar);
-			} catch (IOException de) {
-				LOGGER.warn(String.format("Failed to delete update download: %s", de.getMessage()));
-			}
+		String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+		if (!osName.contains("win")) {
+			candidates.add("/usr/bin/java");
+		}
 
-			return true; // repo was okay, even if applying update failed
+		candidates.add("java");
+		return new ArrayList<>(candidates);
+	}
+
+	static List<String> sanitizeJvmArguments(List<String> inputArgs) {
+		List<String> javaCmd = new ArrayList<>(inputArgs);
+
+		// Disable, but retain, any -agentlib JVM arg as sub-process might fail if it tries to reuse same port
+		javaCmd = javaCmd.stream()
+				.map(arg -> arg.replace("-agentlib", AGENTLIB_JVM_HOLDER_ARG))
+				.collect(Collectors.toList());
+
+		// Remove JNI options as they won't be supported by command-line 'java'
+		// These are typically added by the AdvancedInstaller Java launcher EXE
+		javaCmd.removeAll(Arrays.asList("abort", "exit", "vfprintf"));
+
+		return javaCmd;
+	}
+
+	static List<String> buildApplyUpdateCommand(String javaExecutable, boolean includeJvmArgs,
+											 List<String> runtimeInputArgs, String[] savedArgs, Path newJarAbsolute) {
+		List<String> javaCmd = new ArrayList<>();
+		javaCmd.add(javaExecutable);
+
+		if (includeJvmArgs) {
+			javaCmd.addAll(sanitizeJvmArguments(runtimeInputArgs));
+		}
+
+		// Call ApplyUpdate using new JAR
+		javaCmd.addAll(Arrays.asList("-cp", newJarAbsolute.toString(), ApplyUpdate.class.getCanonicalName()));
+
+		// Add command-line args saved from start-up
+		if (savedArgs != null)
+			javaCmd.addAll(Arrays.asList(savedArgs));
+
+		return javaCmd;
+	}
+
+	private static void startApplyUpdateProcess(List<String> javaCmd) throws IOException {
+		ProcessBuilder processBuilder = new ProcessBuilder(javaCmd);
+
+		// New process will inherit our stdout and stderr
+		processBuilder.redirectOutput(ProcessBuilder.Redirect.INHERIT);
+		processBuilder.redirectError(ProcessBuilder.Redirect.INHERIT);
+
+		Process process = processBuilder.start();
+
+		// Nothing to pipe to new process, so close output stream (process's stdin)
+		process.getOutputStream().close();
+	}
+
+	private static void logLaunchDiagnostics(String javaHome, Path javaBinary, Path javaSpawnHelper, Path newJarAbsolute,
+											 List<String> javaCandidates, int attempts, Exception lastException) {
+		LOGGER.error("Failed to apply update after {} attempts. java.home={}, cwd={}, newJar={}, candidates={}",
+				attempts, javaHome, Paths.get(".").toAbsolutePath().normalize(), newJarAbsolute, javaCandidates);
+
+		logPathDiagnostics("javaBinary", javaBinary);
+		logPathDiagnostics("jspawnhelper", javaSpawnHelper);
+		logPathDiagnostics("newJar", newJarAbsolute);
+
+		if (lastException != null) {
+			LOGGER.error("Last apply update failure summary: {}", lastException.getMessage(), lastException);
 		}
 	}
 
+	private static void logPathDiagnostics(String label, Path path) {
+		try {
+			LOGGER.error("{} -> path={}, exists={}, readable={}, executable={}, size={}",
+					label,
+					path,
+					Files.exists(path),
+					Files.isReadable(path),
+					Files.isExecutable(path),
+					Files.exists(path) ? Files.size(path) : -1L);
+		} catch (IOException e) {
+			LOGGER.error("{} diagnostics failed for {}: {}", label, path, e.getMessage(), e);
+		}
+	}
 }

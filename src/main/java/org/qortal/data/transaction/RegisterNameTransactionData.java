@@ -1,15 +1,14 @@
 package org.qortal.data.transaction;
 
-import javax.xml.bind.Unmarshaller;
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlTransient;
-
+import io.swagger.v3.oas.annotations.media.Schema;
 import org.eclipse.persistence.oxm.annotations.XmlDiscriminatorValue;
 import org.qortal.transaction.Transaction.TransactionType;
 import org.qortal.utils.Unicode;
 
-import io.swagger.v3.oas.annotations.media.Schema;
+import javax.xml.bind.Unmarshaller;
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlTransient;
 
 // All properties to be converted to JSON via JAXB
 @XmlAccessorType(XmlAccessType.FIELD)
@@ -26,7 +25,7 @@ public class RegisterNameTransactionData extends TransactionData {
 	@Schema(description = "requested name", example = "my-name")
 	private String name;
 
-	@Schema(description = "simple name-related info in JSON format", example = "{ \"age\": 30 }")
+	@Schema(description = "simple name-related info in JSON or text format", example = "Registered Name on the Qortal Chain")
 	private String data;
 
 	// For internal use

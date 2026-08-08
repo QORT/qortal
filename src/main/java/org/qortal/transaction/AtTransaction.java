@@ -1,10 +1,9 @@
 package org.qortal.transaction;
 
-import java.util.Arrays;
-import java.util.List;
-
+import com.google.common.primitives.Bytes;
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
+import org.qortal.block.BlockChain;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.asset.AssetData;
 import org.qortal.data.transaction.ATTransactionData;
@@ -12,10 +11,12 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.transform.TransformationException;
+import org.qortal.transform.Transformer;
 import org.qortal.transform.transaction.AtTransactionTransformer;
 import org.qortal.utils.Amounts;
 
-import com.google.common.primitives.Bytes;
+import java.util.Arrays;
+import java.util.List;
 
 public class AtTransaction extends Transaction {
 
@@ -75,9 +76,21 @@ public class AtTransaction extends Transaction {
 
 	@Override
 	public boolean hasValidReference() throws DataException {
+		// Disable reference checking after feature trigger timestamp
+		if (this.atTransactionData.getTimestamp() >= BlockChain.getInstance().getDisableReferenceTimestamp()) {
+			// Allow any value as long as it is the correct length
+			return this.atTransactionData.getReference() != null &&
+					this.atTransactionData.getReference().length == Transformer.SIGNATURE_LENGTH;
+		}
+
 		// Check reference is correct, using AT account, not transaction creator which is null account
 		Account atAccount = getATAccount();
 		return Arrays.equals(atAccount.getLastReference(), atTransactionData.getReference());
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

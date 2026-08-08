@@ -1,5 +1,8 @@
 package org.qortal.globalization;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -9,9 +12,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 /** Providing multi-language BIP39 word lists, downloaded from https://github.com/bitcoin/bips/tree/master/bip-0039 */
 public enum BIP39WordList {

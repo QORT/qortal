@@ -3,18 +3,17 @@ package org.qortal.naming;
 import org.qortal.account.Account;
 import org.qortal.account.PublicKeyAccount;
 import org.qortal.asset.Asset;
+import org.qortal.block.BlockChain;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.naming.NameData;
-import org.qortal.data.transaction.BuyNameTransactionData;
-import org.qortal.data.transaction.CancelSellNameTransactionData;
-import org.qortal.data.transaction.RegisterNameTransactionData;
-import org.qortal.data.transaction.SellNameTransactionData;
-import org.qortal.data.transaction.TransactionData;
-import org.qortal.data.transaction.UpdateNameTransactionData;
+import org.qortal.data.transaction.*;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.transaction.Transaction.TransactionType;
 import org.qortal.utils.Unicode;
+
+import java.util.Objects;
+import java.util.Optional;
 
 public class Name {
 
@@ -62,6 +61,16 @@ public class Name {
 
 	public void register() throws DataException {
 		this.repository.getNameRepository().save(this.nameData);
+
+		if( this.repository.getBlockRepository().getBlockchainHeight() > BlockChain.getInstance().getMultipleNamesPerAccountHeight()) {
+
+			Account account = new Account(this.repository, this.nameData.getOwner());
+
+			// if there is no primary name established, then the new registered name is the primary name
+			if (account.getPrimaryName().isEmpty()) {
+				account.setPrimaryName(this.nameData.getName());
+			}
+		}
 	}
 
 	public void unregister() throws DataException {
@@ -78,9 +87,10 @@ public class Name {
 		// Set name's last-updated timestamp
 		this.nameData.setUpdated(updateNameTransactionData.getTimestamp());
 
-		// Update name and data where appropriate
+		// Update name, reduced name, and data where appropriate
 		if (!updateNameTransactionData.getNewName().isEmpty()) {
 			this.nameData.setName(updateNameTransactionData.getNewName());
+			this.nameData.setReducedName(updateNameTransactionData.getReducedNewName());
 
 			// If we're changing the name, we need to delete old entry
 			this.repository.getNameRepository().delete(updateNameTransactionData.getName());
@@ -91,6 +101,26 @@ public class Name {
 
 		// Save updated name data
 		this.repository.getNameRepository().save(this.nameData);
+
+		if( this.repository.getBlockRepository().getBlockchainHeight() > BlockChain.getInstance().getMultipleNamesPerAccountHeight()) {
+
+			Account account = new Account(this.repository, this.nameData.getOwner());
+
+			// if updating the primary name, then set primary name to new name
+			if( account.getPrimaryName().isEmpty() || account.getPrimaryName().get().equals(updateNameTransactionData.getName())) {
+
+				String newName = updateNameTransactionData.getNewName();
+
+				// if there is a new name, then set primary to the new name
+				if( newName != null && !"".equals(newName)) {
+					account.setPrimaryName(newName);
+				}
+				// if there is not a new name and there is an existing primary name, then remove the existing primary name
+				else if( account.getPrimaryName().isPresent() ){
+					account.removePrimaryName();
+				}
+			}
+		}
 	}
 
 	public void revert(UpdateNameTransactionData updateNameTransactionData) throws DataException {
@@ -106,18 +136,31 @@ public class Name {
 		// We can find previous 'name' from update transaction
 		this.nameData.setName(updateNameTransactionData.getName());
 
+		// We can derive the previous 'reduced name' from the previous name
+		this.nameData.setReducedName(Unicode.sanitize(updateNameTransactionData.getName()));
+
 		// We might need to hunt for previous data value
 		if (!updateNameTransactionData.getNewData().isEmpty())
 			this.nameData.setData(findPreviousData(nameReference));
 
 		this.repository.getNameRepository().save(this.nameData);
 
-		if (!updateNameTransactionData.getNewName().isEmpty())
+		if (!updateNameTransactionData.getNewName().isEmpty() && !Objects.equals(updateNameTransactionData.getName(), updateNameTransactionData.getNewName()))
 			// Name has changed, delete old entry
 			this.repository.getNameRepository().delete(updateNameTransactionData.getNewName());
 
 		// Remove reference to previous name-changing transaction
 		updateNameTransactionData.setNameReference(null);
+
+		if( this.repository.getBlockRepository().getBlockchainHeight() > BlockChain.getInstance().getMultipleNamesPerAccountHeight()) {
+
+			Account account = new Account(this.repository, this.nameData.getOwner());
+
+			// if the primary name is the new updated name, then it needs to be set back to the previous name
+			if (account.getPrimaryName().isPresent() && account.getPrimaryName().get().equals(updateNameTransactionData.getNewName())) {
+				account.setPrimaryName(updateNameTransactionData.getName());
+			}
+		}
 	}
 
 	private String findPreviousData(byte[] nameReference) throws DataException {
@@ -176,8 +219,12 @@ public class Name {
 	}
 
 	public void cancelSell(CancelSellNameTransactionData cancelSellNameTransactionData) throws DataException {
-		// Mark not for-sale but leave price in case we want to orphan
+		// Update previous sale price in transaction data
+		cancelSellNameTransactionData.setSalePrice(this.nameData.getSalePrice());
+
+		// Mark not for-sale
 		this.nameData.setIsForSale(false);
+		this.nameData.setSalePrice(null);
 
 		// Save sale info into repository
 		this.repository.getNameRepository().save(this.nameData);
@@ -186,12 +233,13 @@ public class Name {
 	public void uncancelSell(CancelSellNameTransactionData cancelSellNameTransactionData) throws DataException {
 		// Mark as for-sale using existing price
 		this.nameData.setIsForSale(true);
+		this.nameData.setSalePrice(cancelSellNameTransactionData.getSalePrice());
 
 		// Save no-sale info into repository
 		this.repository.getNameRepository().save(this.nameData);
 	}
 
-	public void buy(BuyNameTransactionData buyNameTransactionData) throws DataException {
+	public void buy(BuyNameTransactionData buyNameTransactionData, boolean modifyBalances) throws DataException {
 		// Save previous name-changing reference in this transaction's data
 		// Caller is expected to save
 		buyNameTransactionData.setNameReference(this.nameData.getReference());
@@ -199,15 +247,20 @@ public class Name {
 		// Mark not for-sale but leave price in case we want to orphan
 		this.nameData.setIsForSale(false);
 
-		// Update seller's balance
-		Account seller = new Account(this.repository, this.nameData.getOwner());
-		seller.modifyAssetBalance(Asset.QORT, buyNameTransactionData.getAmount());
+		if (modifyBalances) {
+			// Update seller's balance
+			Account seller = new Account(this.repository, this.nameData.getOwner());
+			seller.modifyAssetBalance(Asset.QORT, buyNameTransactionData.getAmount());
+		}
 
 		// Set new owner
 		Account buyer = new PublicKeyAccount(this.repository, buyNameTransactionData.getBuyerPublicKey());
 		this.nameData.setOwner(buyer.getAddress());
-		// Update buyer's balance
-		buyer.modifyAssetBalance(Asset.QORT, - buyNameTransactionData.getAmount());
+
+		if (modifyBalances) {
+			// Update buyer's balance
+			buyer.modifyAssetBalance(Asset.QORT, -buyNameTransactionData.getAmount());
+		}
 
 		// Set name-changing reference to this transaction
 		this.nameData.setReference(buyNameTransactionData.getSignature());
@@ -217,6 +270,23 @@ public class Name {
 
 		// Save updated name data
 		this.repository.getNameRepository().save(this.nameData);
+
+		// if multiple names feature is activated, then check the buyer and seller's primary name status
+		if( this.repository.getBlockRepository().getBlockchainHeight() > BlockChain.getInstance().getMultipleNamesPerAccountHeight()) {
+
+			Account seller = new Account(this.repository, buyNameTransactionData.getSeller());
+			Optional<String> sellerPrimaryName = seller.getPrimaryName();
+
+			// if the seller sold their primary name, then remove their primary name
+			if (sellerPrimaryName.isPresent() && sellerPrimaryName.get().equals(buyNameTransactionData.getName())) {
+				seller.removePrimaryName();
+			}
+
+			// if the buyer had no primary name, then set the primary name to the name bought
+			if( buyer.getPrimaryName().isEmpty() ) {
+				buyer.setPrimaryName(buyNameTransactionData.getName());
+			}
+		}
 	}
 
 	public void unbuy(BuyNameTransactionData buyNameTransactionData) throws DataException {
@@ -247,6 +317,22 @@ public class Name {
 		// Clean previous name-changing reference from this transaction's data
 		// Caller is expected to save
 		buyNameTransactionData.setNameReference(null);
+
+		// if multiple names feature is activated, then check the buyer and seller's primary name status
+		if( this.repository.getBlockRepository().getBlockchainHeight() > BlockChain.getInstance().getMultipleNamesPerAccountHeight()) {
+
+			// if the seller lost their primary name, then set their primary name back
+			if (seller.getPrimaryName().isEmpty()) {
+				seller.setPrimaryName(this.nameData.getName());
+			}
+
+			Optional<String> buyerPrimaryName = buyer.getPrimaryName();
+
+			// if the buyer bought their primary, then remove it
+			if( buyerPrimaryName.isPresent() && this.nameData.getName().equals(buyerPrimaryName.get()) ) {
+				buyer.removePrimaryName();
+			}
+		}
 	}
 
 	private Long fetchPreviousUpdateTimestamp(byte[] nameReference) throws DataException {
@@ -259,6 +345,10 @@ public class Name {
 			return null;
 
 		return previousTransactionData.getTimestamp();
+	}
+
+	public NameData getNameData() {
+		return this.nameData;
 	}
 
 }

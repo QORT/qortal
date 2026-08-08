@@ -1,8 +1,5 @@
 package org.qortal.test.common.transaction;
 
-import java.util.ArrayList;
-import java.util.List;
-
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.asset.Asset;
 import org.qortal.data.PaymentData;
@@ -11,6 +8,9 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.utils.Amounts;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class MultiPaymentTestTransaction extends TestTransaction {
 

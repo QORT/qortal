@@ -1,8 +1,5 @@
 package org.qortal.transaction;
 
-import java.util.List;
-import java.util.stream.Collectors;
-
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.data.PaymentData;
@@ -11,6 +8,9 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.payment.Payment;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class MultiPaymentTransaction extends Transaction {
 
@@ -65,6 +65,11 @@ public class MultiPaymentTransaction extends Transaction {
 		List<PaymentData> payments = this.multiPaymentTransactionData.getPayments();
 
 		return new Payment(this.repository).isProcessable(this.multiPaymentTransactionData.getSenderPublicKey(), payments, this.multiPaymentTransactionData.getFee());
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

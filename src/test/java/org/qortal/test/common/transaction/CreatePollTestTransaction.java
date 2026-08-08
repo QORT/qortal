@@ -1,15 +1,15 @@
 package org.qortal.test.common.transaction;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
-
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.data.transaction.CreatePollTransactionData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.data.voting.PollOptionData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
 
 public class CreatePollTestTransaction extends TestTransaction {
 

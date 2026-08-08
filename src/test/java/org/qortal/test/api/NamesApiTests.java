@@ -1,7 +1,5 @@
 package org.qortal.test.api;
 
-import static org.junit.Assert.*;
-
 import org.junit.Before;
 import org.junit.Test;
 import org.qortal.account.PrivateKeyAccount;
@@ -16,6 +14,9 @@ import org.qortal.test.common.ApiCommon;
 import org.qortal.test.common.Common;
 import org.qortal.test.common.TransactionUtils;
 import org.qortal.test.common.transaction.TestTransaction;
+import org.qortal.transaction.RegisterNameTransaction;
+
+import static org.junit.Assert.assertNotNull;
 
 public class NamesApiTests extends ApiCommon {
 
@@ -35,8 +36,8 @@ public class NamesApiTests extends ApiCommon {
 
 	@Test
 	public void testGetAllNames() {
-		assertNotNull(this.namesResource.getAllNames(null, null, null));
-		assertNotNull(this.namesResource.getAllNames(1, 1, true));
+		assertNotNull(this.namesResource.getAllNames(null, null, null, null));
+		assertNotNull(this.namesResource.getAllNames(1L, 1, 1, true));
 	}
 
 	@Test
@@ -47,6 +48,7 @@ public class NamesApiTests extends ApiCommon {
 			String name = "test-name";
 
 			RegisterNameTransactionData transactionData = new RegisterNameTransactionData(TestTransaction.generateBase(alice), name, "{}");
+			transactionData.setFee(new RegisterNameTransaction(null, null).getUnitFee(transactionData.getTimestamp()));
 			TransactionUtils.signAndMint(repository, transactionData, alice);
 
 			assertNotNull(this.namesResource.getNamesByAddress(alice.getAddress(), null, null, null));
@@ -62,6 +64,7 @@ public class NamesApiTests extends ApiCommon {
 			String name = "test-name";
 
 			RegisterNameTransactionData transactionData = new RegisterNameTransactionData(TestTransaction.generateBase(alice), name, "{}");
+			transactionData.setFee(new RegisterNameTransaction(null, null).getUnitFee(transactionData.getTimestamp()));
 			TransactionUtils.signAndMint(repository, transactionData, alice);
 
 			assertNotNull(this.namesResource.getName(name));
@@ -77,6 +80,7 @@ public class NamesApiTests extends ApiCommon {
 			long price = 1_23456789L;
 
 			TransactionData transactionData = new RegisterNameTransactionData(TestTransaction.generateBase(alice), name, "{}");
+			transactionData.setFee(new RegisterNameTransaction(null, null).getUnitFee(transactionData.getTimestamp()));
 			TransactionUtils.signAndMint(repository, transactionData, alice);
 
 			// Sell-name

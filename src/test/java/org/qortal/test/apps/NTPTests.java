@@ -1,16 +1,16 @@
 package org.qortal.test.apps;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.config.Configuration;
 import org.apache.logging.log4j.core.config.LoggerConfig;
-import org.apache.logging.log4j.core.LoggerContext;
 import org.qortal.utils.NTP;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 public class NTPTests {
 

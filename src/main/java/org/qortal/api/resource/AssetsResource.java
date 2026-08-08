@@ -8,22 +8,6 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.stream.Collectors;
-
-import javax.servlet.http.HttpServletRequest;
-import javax.ws.rs.DefaultValue;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.MediaType;
-
 import org.qortal.api.ApiError;
 import org.qortal.api.ApiErrors;
 import org.qortal.api.ApiException;
@@ -32,33 +16,39 @@ import org.qortal.api.model.AggregatedOrder;
 import org.qortal.api.model.TradeWithOrderInfo;
 import org.qortal.api.resource.TransactionsResource.ConfirmationStatus;
 import org.qortal.asset.Asset;
+import org.qortal.controller.hsqldb.HSQLDBBalanceRecorder;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.account.AccountBalanceData;
 import org.qortal.data.account.AccountData;
+import org.qortal.data.account.AddressAmountData;
+import org.qortal.data.account.BlockHeightRange;
+import org.qortal.data.account.BlockHeightRangeAddressAmounts;
 import org.qortal.data.asset.AssetData;
 import org.qortal.data.asset.OrderData;
 import org.qortal.data.asset.RecentTradeData;
 import org.qortal.data.asset.TradeData;
-import org.qortal.data.transaction.CancelAssetOrderTransactionData;
-import org.qortal.data.transaction.CreateAssetOrderTransactionData;
-import org.qortal.data.transaction.IssueAssetTransactionData;
-import org.qortal.data.transaction.TransactionData;
-import org.qortal.data.transaction.TransferAssetTransactionData;
-import org.qortal.data.transaction.UpdateAssetTransactionData;
+import org.qortal.data.transaction.*;
+import org.qortal.repository.AccountRepository.BalanceOrdering;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.repository.RepositoryManager;
-import org.qortal.repository.AccountRepository.BalanceOrdering;
 import org.qortal.settings.Settings;
 import org.qortal.transaction.Transaction;
 import org.qortal.transaction.Transaction.ValidationResult;
 import org.qortal.transform.TransformationException;
-import org.qortal.transform.transaction.CancelAssetOrderTransactionTransformer;
-import org.qortal.transform.transaction.CreateAssetOrderTransactionTransformer;
-import org.qortal.transform.transaction.IssueAssetTransactionTransformer;
-import org.qortal.transform.transaction.TransferAssetTransactionTransformer;
-import org.qortal.transform.transaction.UpdateAssetTransactionTransformer;
+import org.qortal.transform.transaction.*;
+import org.qortal.utils.BalanceRecorderUtils;
 import org.qortal.utils.Base58;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.ws.rs.*;
+import javax.ws.rs.core.Context;
+import javax.ws.rs.core.MediaType;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Path("/assets")
 @Tag(name = "Assets")
@@ -192,6 +182,122 @@ public class AssetsResource {
 			throw e;
 		} catch (DataException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
+	@GET
+	@Path("/balancedynamicranges")
+	@Operation(
+			summary = "Get balance dynamic ranges listed.",
+			description = ".",
+			responses = {
+					@ApiResponse(
+							content = @Content(
+									array = @ArraySchema(
+											schema = @Schema(
+													implementation = BlockHeightRange.class
+											)
+									)
+							)
+					)
+			}
+	)
+	public List<BlockHeightRange> getBalanceDynamicRanges(
+			@Parameter(ref = "offset") @QueryParam("offset") Integer offset,
+			@Parameter(ref = "limit") @QueryParam("limit") Integer limit,
+			@Parameter(ref = "reverse") @QueryParam("reverse") Boolean reverse) {
+
+		Optional<HSQLDBBalanceRecorder> recorder = HSQLDBBalanceRecorder.getInstance();
+
+		if( recorder.isPresent()) {
+			return recorder.get().getRanges(offset, limit, reverse);
+		}
+		else {
+			return new ArrayList<>(0);
+		}
+	}
+
+	@GET
+	@Path("/balancedynamicrange/{height}")
+	@Operation(
+			summary = "Get balance dynamic range for a given height.",
+			description = ".",
+			responses = {
+					@ApiResponse(
+							content = @Content(
+										schema = @Schema(
+												implementation = BlockHeightRange.class
+										)
+							)
+					)
+			}
+	)
+	@ApiErrors({
+			ApiError.INVALID_CRITERIA, ApiError.INVALID_DATA
+	})
+	public BlockHeightRange getBalanceDynamicRange(@PathParam("height") int height) {
+
+		Optional<HSQLDBBalanceRecorder> recorder = HSQLDBBalanceRecorder.getInstance();
+
+		if( recorder.isPresent()) {
+			Optional<BlockHeightRange> range = recorder.get().getRange(height);
+
+			if( range.isPresent() ) {
+				return range.get();
+			}
+			else {
+				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_CRITERIA);
+			}
+		}
+		else {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
+		}
+	}
+
+	@GET
+	@Path("/balancedynamicamounts/{begin}/{end}")
+	@Operation(
+			summary = "Get balance dynamic ranges address amounts listed.",
+			description = ".",
+			responses = {
+					@ApiResponse(
+							content = @Content(
+									array = @ArraySchema(
+											schema = @Schema(
+													implementation = AddressAmountData.class
+											)
+									)
+							)
+					)
+			}
+	)
+	@ApiErrors({
+			ApiError.INVALID_CRITERIA, ApiError.INVALID_DATA
+	})
+	public List<AddressAmountData> getBalanceDynamicAddressAmounts(
+			@PathParam("begin") int begin,
+			@PathParam("end") int end,
+			@Parameter(ref = "offset") @QueryParam("offset") Integer offset,
+			@Parameter(ref = "limit") @QueryParam("limit") Integer limit) {
+
+		Optional<HSQLDBBalanceRecorder> recorder = HSQLDBBalanceRecorder.getInstance();
+
+		if( recorder.isPresent()) {
+			Optional<BlockHeightRangeAddressAmounts> addressAmounts = recorder.get().getAddressAmounts(new BlockHeightRange(begin, end, false));
+
+			if( addressAmounts.isPresent() ) {
+				return addressAmounts.get().getAmounts().stream()
+					.sorted(BalanceRecorderUtils.ADDRESS_AMOUNT_DATA_COMPARATOR.reversed())
+					.skip(offset)
+					.limit(limit)
+					.collect(Collectors.toList());
+			}
+			else {
+				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_CRITERIA);
+			}
+		}
+		else {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_DATA);
 		}
 	}
 

@@ -1,8 +1,5 @@
 package org.qortal.repository.hsqldb.transaction;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-
 import org.qortal.data.transaction.BaseTransactionData;
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.data.transaction.UpdateGroupTransactionData;
@@ -10,6 +7,9 @@ import org.qortal.group.Group.ApprovalThreshold;
 import org.qortal.repository.DataException;
 import org.qortal.repository.hsqldb.HSQLDBRepository;
 import org.qortal.repository.hsqldb.HSQLDBSaver;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
 
 public class HSQLDBUpdateGroupTransactionRepository extends HSQLDBTransactionRepository {
 

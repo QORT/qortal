@@ -5,42 +5,37 @@ public class ATStateData {
 	// Properties
 	private String ATAddress;
 	private Integer height;
-	private Long creation;
 	private byte[] stateData;
 	private byte[] stateHash;
 	private Long fees;
 	private boolean isInitial;
 
+	// Qortal-AT-specific
+	private Long sleepUntilMessageTimestamp;
+
 	// Constructors
 
 	/** Create new ATStateData */
-	public ATStateData(String ATAddress, Integer height, Long creation, byte[] stateData, byte[] stateHash, Long fees, boolean isInitial) {
+	public ATStateData(String ATAddress, Integer height, byte[] stateData, byte[] stateHash, Long fees,
+			boolean isInitial, Long sleepUntilMessageTimestamp) {
 		this.ATAddress = ATAddress;
 		this.height = height;
-		this.creation = creation;
 		this.stateData = stateData;
 		this.stateHash = stateHash;
 		this.fees = fees;
 		this.isInitial = isInitial;
+		this.sleepUntilMessageTimestamp = sleepUntilMessageTimestamp;
 	}
 
 	/** For recreating per-block ATStateData from repository where not all info is needed */
 	public ATStateData(String ATAddress, int height, byte[] stateHash, Long fees, boolean isInitial) {
-		this(ATAddress, height, null, null, stateHash, fees, isInitial);
-	}
-
-	/** For creating ATStateData from serialized bytes when we don't have all the info */
-	public ATStateData(String ATAddress, byte[] stateHash) {
-		// This won't ever be initial AT state from deployment as that's never serialized over the network,
-		// but generated when the DeployAtTransaction is processed locally.
-		this(ATAddress, null, null, null, stateHash, null, false);
+		this(ATAddress, height, null, stateHash, fees, isInitial, null);
 	}
 
 	/** For creating ATStateData from serialized bytes when we don't have all the info */
 	public ATStateData(String ATAddress, byte[] stateHash, Long fees) {
-		// This won't ever be initial AT state from deployment as that's never serialized over the network,
-		// but generated when the DeployAtTransaction is processed locally.
-		this(ATAddress, null, null, null, stateHash, fees, false);
+		// This won't ever be initial AT state from deployment, as that's never serialized over the network.
+		this(ATAddress, null, null, stateHash, fees, false, null);
 	}
 
 	// Getters / setters
@@ -58,10 +53,6 @@ public class ATStateData {
 		this.height = height;
 	}
 
-	public Long getCreation() {
-		return this.creation;
-	}
-
 	public byte[] getStateData() {
 		return this.stateData;
 	}
@@ -76,6 +67,14 @@ public class ATStateData {
 
 	public boolean isInitial() {
 		return this.isInitial;
+	}
+
+	public Long getSleepUntilMessageTimestamp() {
+		return this.sleepUntilMessageTimestamp;
+	}
+
+	public void setSleepUntilMessageTimestamp(Long sleepUntilMessageTimestamp) {
+		this.sleepUntilMessageTimestamp = sleepUntilMessageTimestamp;
 	}
 
 }

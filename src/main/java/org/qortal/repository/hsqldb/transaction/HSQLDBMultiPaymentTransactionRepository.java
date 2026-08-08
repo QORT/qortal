@@ -1,9 +1,5 @@
 package org.qortal.repository.hsqldb.transaction;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.List;
-
 import org.qortal.data.PaymentData;
 import org.qortal.data.transaction.BaseTransactionData;
 import org.qortal.data.transaction.MultiPaymentTransactionData;
@@ -11,6 +7,10 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.hsqldb.HSQLDBRepository;
 import org.qortal.repository.hsqldb.HSQLDBSaver;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.List;
 
 public class HSQLDBMultiPaymentTransactionRepository extends HSQLDBTransactionRepository {
 

@@ -1,9 +1,6 @@
 package org.qortal.transaction;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-
+import com.google.common.primitives.Bytes;
 import org.qortal.account.Account;
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.crypto.Crypto;
@@ -14,7 +11,9 @@ import org.qortal.repository.Repository;
 import org.qortal.transform.TransformationException;
 import org.qortal.transform.transaction.TransactionTransformer;
 
-import com.google.common.primitives.Bytes;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 public class GenesisTransaction extends Transaction {
 
@@ -98,6 +97,11 @@ public class GenesisTransaction extends Transaction {
 			return ValidationResult.INVALID_ADDRESS;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

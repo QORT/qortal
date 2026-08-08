@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use POSIX;
 use Getopt::Std;
+use File::Slurp;
 
 sub usage() {
 	die("usage: $0 [-p api-port] dev-private-key [short-commit-hash]\n");
@@ -34,6 +35,8 @@ while (<POM>) {
 }
 close(POM);
 
+my $apikey = read_file('apikey.txt');
+
 # Do we need to determine commit hash?
 unless ($commit_hash) {
 	# determine git branch
@@ -57,14 +60,17 @@ $timestamp *= 1000; # Convert to milliseconds
 
 # locate sha256 utility
 my $SHA256 = `which sha256sum || which sha256`;
+chomp $SHA256;
+die("Can't find sha256sum or sha256\n") unless length($SHA256) > 0;
 
 # SHA256 of actual update file
-my $sha256 = `git show auto-update-${commit_hash}:${project}.update | ${SHA256}`;
+my $sha256 = `git show auto-update-${commit_hash}:${project}.update | ${SHA256} | head -c 64`;
 die("Can't calculate SHA256 of ${project}.update\n") unless $sha256 =~ m/(\S{64})/;
 chomp $sha256;
 
 # long-form commit hash of HEAD on auto-update branch
-my $update_hash = `git rev-parse refs/heads/auto-update-${commit_hash}`;
+#my $update_hash = `git rev-parse refs/heads/auto-update-${commit_hash}`;
+my $update_hash = `git rev-parse origin/auto-update-${commit_hash}`;
 die("Can't find commit hash for HEAD on auto-update-${commit_hash} branch\n") if ! defined $update_hash;
 chomp $update_hash;
 
@@ -82,9 +88,16 @@ my $data_hex = sprintf "%016x%s%s", $timestamp, $update_hash, $sha256;
 printf "\nARBITRARY transaction data payload: %s\n", $data_hex;
 
 my $n_payments = 0;
-my $is_raw = 1; # RAW_DATA
+my $data_type = 1; # RAW_DATA
 my $data_length = length($data_hex) / 2; # two hex chars per byte
-my $fee = 0.001 * 1e8;
+my $fee = 0.01 * 1e8;
+my $nonce = 0;
+my $name_length = 0;
+my $identifier_length = 0;
+my $method = 0; # PUT
+my $secret_length = 0;
+my $compression = 0; # None
+my $metadata_hash_length = 0;
 
 die("Something's wrong: data length is not 60 bytes!\n") if $data_length != 60;
 
@@ -108,23 +121,69 @@ my $reference_hex = `curl --silent --url http://localhost:${port}/utils/frombase
 die("Can't convert base58 reference to hex:\n$reference_hex\n") unless $reference_hex =~ m/^[A-Za-z0-9]{128}$/;
 printf "Last reference hex: %s\n", $reference_hex;
 
-my $raw_tx_hex = sprintf("%08x%016x%08x%s%s%08x%08x%02x%08x%s%016x", $tx_type, $tx_timestamp, $tx_group_id, $reference_hex, $pubkey_hex, $n_payments, $service, $is_raw, $data_length, $data_hex, $fee);
+my $raw_tx_hex = sprintf("%08x%016x%08x%s%s%08x%08x%08x%08x%08x%08x%08x%08x%02x%08x%s%08x%08x%016x", $tx_type, $tx_timestamp, $tx_group_id, $reference_hex, $pubkey_hex, $nonce, $name_length, $identifier_length, $method, $secret_length, $compression, $n_payments, $service, $data_type, $data_length, $data_hex, $data_length, $metadata_hash_length, $fee);
 printf "\nRaw transaction hex:\n%s\n", $raw_tx_hex;
 
 my $raw_tx = `curl --silent --url http://localhost:${port}/utils/tobase58/${raw_tx_hex}`;
-die("Can't convert raw transaction hex to base58:\n$raw_tx\n") unless $raw_tx =~ m/^\w{255,265}$/; # Roughly 255 to 265 base58 chars
+die("Can't convert raw transaction hex to base58:\n$raw_tx\n") unless $raw_tx =~ m/^\w{300,320}$/; # Roughly 305 to 320 base58 chars
 printf "\nRaw transaction (base58):\n%s\n", $raw_tx;
 
 my $sign_data = qq|' { "privateKey": "${privkey}", "transactionBytes": "${raw_tx}" } '|;
 my $signed_tx = `curl --silent -H "accept: text/plain" -H "Content-Type: application/json" --url http://localhost:${port}/transactions/sign --data ${sign_data}`;
-die("Can't sign raw transaction:\n$signed_tx\n") unless $signed_tx =~ m/^\w{345,355}$/; # +90ish longer than $raw_tx
+die("Can't sign raw transaction:\n$signed_tx\n") unless $signed_tx =~ m/^\w{390,410}$/; # +90ish longer than $raw_tx
 printf "\nSigned transaction:\n%s\n", $signed_tx;
 
-# Check we can actually fetch update
+# Get the origin URL - So that we will be able to TEST the obtaining of the qortal.update... 
 my $origin = `git remote get-url origin`;
-die("Unable to get github url for 'origin'?\n") unless $origin && $origin =~ m/:(.*)\.git$/;
-my $repo = $1;
+chomp $origin; # Remove any trailing newlines
+die("Unable to get github url for 'origin'?\n") unless $origin;
+
+# Debug: Print the origin URL
+print "Full Origin URL: $origin\n";
+
+# Extract the repository path (e.g., Qortal/qortal) NOTE - github is case-sensitive with repo names
+my $repo;
+if ($origin =~ m/[:\/]([\w\-]+\/[\w\-]+)\.git$/) {
+    $repo = $1;
+    print "Extracted direct repository path: $repo\n";
+    if ($repo =~ m/^qortal\//i) {
+        $repo =~ s/^qortal\//Qortal\//;
+        print "Corrected repository path capitalization: $repo\n";
+    }
+    print "Please verify the direct repository path. Current: '$repo'\n";
+    print "If incorrect, input the correct direct repository path (e.g., 'Qortal/qortal' or 'bob/qortal').NOTE - github is CASE SENSITIVE for repository urls... Press Enter to keep the extracted version: ";
+    my $input = <STDIN>;
+    if ($input =~ m/^qortal\//i) {
+        $input =~ s/^qortal\//Qortal\//;
+        print "Corrected repository path capitalization: $repo\n";
+    }
+    chomp $input;
+    $repo = $input if $input; # Update repo if user provides input
+
+} else {
+    # Default to qortal/qortal if extraction fails
+    $repo = "Qortal/qortal";
+    print "Failed to extract repository path from origin URL. Using default: $repo\n";
+
+    # Prompt the user for confirmation or input
+    print "Please verify the repository path. Current: '$repo'\n";
+    print "If incorrect, input the correct repository path (e.g., 'Qortal/qortal' or 'BobsCodeburgers/qortal'). NOTE - GitHub is CASE SENSITIVE for repository urls... Press Enter to keep the default: ";
+    my $input = <STDIN>;
+    if ($input =~ m/^qortal\//i) {
+        $input =~ s/^qortal\//Qortal\//;
+        print "Corrected repository path capitalization: $repo\n";
+    }
+    chomp $input;
+    $repo = $input if $input; # Update repo if user provides input
+}
+
+# Debug: Print the final repository path
+print "Final direct repository path: $repo\n";
+
+# Construct the update URL
 my $update_url = "https://github.com/${repo}/raw/${update_hash}/${project}.update";
+print "Final update URL: $update_url\n";
+
 
 my $fetch_result = `curl --silent -o /dev/null --location --range 0-1 --head --write-out '%{http_code}' --url ${update_url}`;
 die("\nUnable to fetch update from ${update_url}\n") if $fetch_result ne '200';

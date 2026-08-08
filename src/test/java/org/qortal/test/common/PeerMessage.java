@@ -1,7 +1,6 @@
 package org.qortal.test.common;
 
 import org.qortal.network.message.Message;
-import org.qortal.test.common.FakePeer;
 
 public class PeerMessage {
 	public final FakePeer peer;

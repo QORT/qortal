@@ -1,7 +1,5 @@
 package org.qortal.test.common.transaction;
 
-import java.util.Random;
-
 import org.qortal.account.PrivateKeyAccount;
 import org.qortal.asset.Asset;
 import org.qortal.data.transaction.DeployAtTransactionData;
@@ -9,6 +7,8 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.utils.Amounts;
+
+import java.util.Random;
 
 public class DeployAtTestTransaction extends TestTransaction {
 

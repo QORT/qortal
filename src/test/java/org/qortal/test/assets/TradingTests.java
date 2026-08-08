@@ -12,9 +12,9 @@ import org.qortal.test.common.AssetUtils;
 import org.qortal.test.common.Common;
 import org.qortal.utils.Amounts;
 
-import static org.junit.Assert.assertEquals;
-
 import java.util.Map;
+
+import static org.junit.Assert.assertEquals;
 
 public class TradingTests extends Common {
 

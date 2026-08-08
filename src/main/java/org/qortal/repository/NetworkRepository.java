@@ -1,9 +1,9 @@
 package org.qortal.repository;
 
-import java.util.List;
-
 import org.qortal.data.network.PeerData;
 import org.qortal.network.PeerAddress;
+
+import java.util.List;
 
 public interface NetworkRepository {
 

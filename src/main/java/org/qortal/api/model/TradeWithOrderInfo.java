@@ -1,13 +1,12 @@
 package org.qortal.api.model;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlElement;
-
+import io.swagger.v3.oas.annotations.media.Schema;
 import org.qortal.data.asset.OrderData;
 import org.qortal.data.asset.TradeData;
 
-import io.swagger.v3.oas.annotations.media.Schema;
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlElement;
 
 @Schema(description = "Asset trade, including order info")
 // All properties to be converted to JSON via JAX-RS

@@ -1,9 +1,5 @@
 package org.qortal.test.assets;
 
-import static org.junit.Assert.assertEquals;
-
-import java.math.BigDecimal;
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -11,6 +7,10 @@ import org.qortal.asset.Order;
 import org.qortal.repository.DataException;
 import org.qortal.test.common.Common;
 import org.qortal.utils.Amounts;
+
+import java.math.BigDecimal;
+
+import static org.junit.Assert.assertEquals;
 
 /** Check granularity adjustment values. */
 public class GranularityTests extends Common {

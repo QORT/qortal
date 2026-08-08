@@ -1,13 +1,12 @@
 package org.qortal.data.transaction;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.media.Schema.AccessMode;
+import org.qortal.transaction.Transaction.TransactionType;
+
 import javax.xml.bind.Unmarshaller;
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
-
-import org.qortal.transaction.Transaction.TransactionType;
-
-import io.swagger.v3.oas.annotations.media.Schema;
-import io.swagger.v3.oas.annotations.media.Schema.AccessMode;
 
 // All properties to be converted to JSON via JAXB
 @XmlAccessorType(XmlAccessType.FIELD)
@@ -25,6 +24,8 @@ public class ChatTransactionData extends TransactionData {
 	private int nonce;
 
 	private String recipient; // can be null
+
+	private byte[] chatReference; // can be null
 
 	@Schema(description = "raw message data, possibly UTF8 text", example = "2yGEbwRFyhPZZckKA")
 	private byte[] data;
@@ -44,13 +45,14 @@ public class ChatTransactionData extends TransactionData {
 	}
 
 	public ChatTransactionData(BaseTransactionData baseTransactionData,
-			String sender, int nonce, String recipient, byte[] data, boolean isText, boolean isEncrypted) {
+			String sender, int nonce, String recipient, byte[] chatReference, byte[] data, boolean isText, boolean isEncrypted) {
 		super(TransactionType.CHAT, baseTransactionData);
 
 		this.senderPublicKey = baseTransactionData.creatorPublicKey;
 		this.sender = sender;
 		this.nonce = nonce;
 		this.recipient = recipient;
+		this.chatReference = chatReference;
 		this.data = data;
 		this.isText = isText;
 		this.isEncrypted = isEncrypted;
@@ -76,6 +78,14 @@ public class ChatTransactionData extends TransactionData {
 
 	public String getRecipient() {
 		return this.recipient;
+	}
+
+	public byte[] getChatReference() {
+		return this.chatReference;
+	}
+
+	public void setChatReference(byte[] chatReference) {
+		this.chatReference = chatReference;
 	}
 
 	public byte[] getData() {

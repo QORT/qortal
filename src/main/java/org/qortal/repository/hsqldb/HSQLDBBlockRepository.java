@@ -1,11 +1,5 @@
 package org.qortal.repository.hsqldb;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.api.model.BlockSignerSummary;
 import org.qortal.data.block.BlockData;
 import org.qortal.data.block.BlockSummaryData;
@@ -14,6 +8,13 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.repository.BlockRepository;
 import org.qortal.repository.DataException;
 import org.qortal.repository.TransactionRepository;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.logging.Logger;
 
 public class HSQLDBBlockRepository implements BlockRepository {
 
@@ -72,6 +73,35 @@ public class HSQLDBBlockRepository implements BlockRepository {
 	}
 
 	@Override
+	public List<BlockData> fromSignatures(List<byte[]> signatures) throws DataException {
+		StringBuffer sql = new StringBuffer();
+		sql.append("SELECT " + BLOCK_DB_COLUMNS + " ");
+		sql.append("FROM Blocks WHERE signature IN (");
+		sql.append(String.join(", ", Collections.nCopies(signatures.size(), "?")));
+		sql.append(")");
+
+		List<BlockData> list;
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), signatures.toArray(new byte[0][]))) {
+			if (resultSet == null) {
+				return new ArrayList<>(0);
+			}
+
+			list = new ArrayList<>(signatures.size());
+			do {
+				BlockData blockFromResultSet = getBlockFromResultSet(resultSet);
+
+				if( blockFromResultSet != null ) list.add(blockFromResultSet);
+			} while( resultSet.next());
+
+			return list;
+		} catch (SQLException e) {
+			throw new DataException("Error fetching block by signature from repository", e);
+		} catch ( Exception e ) {
+			throw new DataException(e.getMessage());
+		}
+	}
+
+	@Override
 	public BlockData fromReference(byte[] reference) throws DataException {
 		String sql = "SELECT " + BLOCK_DB_COLUMNS + " FROM Blocks WHERE reference = ? LIMIT 1";
 
@@ -119,7 +149,7 @@ public class HSQLDBBlockRepository implements BlockRepository {
 	@Override
 	public int getHeightFromTimestamp(long timestamp) throws DataException {
 		// Uses (minted_when, height) index
-		String sql = "SELECT height FROM Blocks WHERE minted_when <= ? ORDER BY minted_when DESC LIMIT 1";
+		String sql = "SELECT height FROM Blocks WHERE minted_when <= ? ORDER BY minted_when DESC, height DESC LIMIT 1";
 
 		try (ResultSet resultSet = this.repository.checkedExecute(sql, timestamp)) {
 			if (resultSet == null)
@@ -128,6 +158,20 @@ public class HSQLDBBlockRepository implements BlockRepository {
 			return resultSet.getInt(1);
 		} catch (SQLException e) {
 			throw new DataException("Error obtaining block height by timestamp from repository", e);
+		}
+	}
+
+	@Override
+	public long getTimestampFromHeight(int height) throws DataException {
+		String sql = "SELECT minted_when FROM Blocks WHERE height = ?";
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql, height)) {
+			if (resultSet == null)
+				return 0;
+
+			return resultSet.getLong(1);
+		} catch (SQLException e) {
+			throw new DataException("Error obtaining block timestamp by height from repository", e);
 		}
 	}
 
@@ -160,7 +204,11 @@ public class HSQLDBBlockRepository implements BlockRepository {
 	public List<TransactionData> getTransactionsFromSignature(byte[] signature, Integer limit, Integer offset, Boolean reverse) throws DataException {
 		StringBuilder sql = new StringBuilder(256);
 
-		sql.append("SELECT transaction_signature FROM BlockTransactions WHERE block_signature = ? ORDER BY sequence");
+		sql.append("SELECT transaction_signature FROM BlockTransactions WHERE block_signature = ? ORDER BY block_signature");
+		if (reverse != null && reverse)
+			sql.append(" DESC");
+
+		sql.append(", sequence");
 		if (reverse != null && reverse)
 			sql.append(" DESC");
 
@@ -278,7 +326,7 @@ public class HSQLDBBlockRepository implements BlockRepository {
 	@Override
 	public List<BlockSummaryData> getBlockSummariesBySigner(byte[] signerPublicKey, Integer limit, Integer offset, Boolean reverse) throws DataException {
 		StringBuilder sql = new StringBuilder(512);
-		sql.append("SELECT signature, height, Blocks.minter, online_accounts_count FROM ");
+		sql.append("SELECT signature, height, Blocks.minter, online_accounts_count, minted_when, transaction_count, Blocks.reference FROM ");
 
 		// List of minter account's public key and reward-share public keys with minter's public key
 		sql.append("(SELECT * FROM (VALUES (CAST(? AS QortalPublicKey))) UNION (SELECT reward_share_public_key FROM RewardShares WHERE minter_public_key = ?)) AS PublicKeys (public_key) ");
@@ -303,8 +351,12 @@ public class HSQLDBBlockRepository implements BlockRepository {
 				int height = resultSet.getInt(2);
 				byte[] blockMinterPublicKey = resultSet.getBytes(3);
 				int onlineAccountsCount = resultSet.getInt(4);
+				long timestamp = resultSet.getLong(5);
+				int transactionCount = resultSet.getInt(6);
+				byte[] reference = resultSet.getBytes(7);
 
-				BlockSummaryData blockSummary = new BlockSummaryData(height, signature, blockMinterPublicKey, onlineAccountsCount);
+				BlockSummaryData blockSummary = new BlockSummaryData(height, signature, blockMinterPublicKey, onlineAccountsCount,
+						timestamp, transactionCount, reference);
 				blockSummaries.add(blockSummary);
 			} while (resultSet.next());
 
@@ -335,8 +387,39 @@ public class HSQLDBBlockRepository implements BlockRepository {
 	}
 
 	@Override
+	public Long getTotalFeesInBlockRange(int firstBlockHeight, int lastBlockHeight) throws DataException {
+		String sql = "SELECT SUM(total_fees) AS sum_total_fees FROM Blocks WHERE height BETWEEN ? AND ?";
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql, firstBlockHeight, lastBlockHeight)) {
+			if (resultSet == null)
+				return null;
+
+			long totalFees = resultSet.getLong(1);
+
+			return totalFees;
+		} catch (SQLException e) {
+			throw new DataException("Error fetching total fees in block range from repository", e);
+		}
+	}
+
+	@Override
+	public BlockData getBlockInRangeWithHighestOnlineAccountsCount(int firstBlockHeight, int lastBlockHeight) throws DataException {
+		String sql = "SELECT " + BLOCK_DB_COLUMNS + " FROM Blocks WHERE height BETWEEN ? AND ? "
+				+ "ORDER BY online_accounts_count DESC, height ASC "
+				+ "LIMIT 1";
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql, firstBlockHeight, lastBlockHeight)) {
+			return getBlockFromResultSet(resultSet);
+
+		} catch (SQLException e) {
+			throw new DataException("Error fetching highest online accounts block in range from repository", e);
+		}
+	}
+
+	@Override
 	public List<BlockSummaryData> getBlockSummaries(int firstBlockHeight, int lastBlockHeight) throws DataException {
-		String sql = "SELECT signature, height, minter, online_accounts_count FROM Blocks WHERE height BETWEEN ? AND ?";
+		String sql = "SELECT signature, height, minter, online_accounts_count, minted_when, transaction_count, reference "
+				+ "FROM Blocks WHERE height BETWEEN ? AND ?";
 
 		List<BlockSummaryData> blockSummaries = new ArrayList<>();
 
@@ -349,8 +432,12 @@ public class HSQLDBBlockRepository implements BlockRepository {
 				int height = resultSet.getInt(2);
 				byte[] minterPublicKey = resultSet.getBytes(3);
 				int onlineAccountsCount = resultSet.getInt(4);
+				long timestamp = resultSet.getLong(5);
+				int transactionCount = resultSet.getInt(6);
+				byte[] reference = resultSet.getBytes(7);
 
-				BlockSummaryData blockSummary = new BlockSummaryData(height, signature, minterPublicKey, onlineAccountsCount);
+				BlockSummaryData blockSummary = new BlockSummaryData(height, signature, minterPublicKey, onlineAccountsCount,
+						timestamp, transactionCount, reference);
 				blockSummaries.add(blockSummary);
 			} while (resultSet.next());
 
@@ -361,25 +448,108 @@ public class HSQLDBBlockRepository implements BlockRepository {
 	}
 
 	@Override
-	public int trimOldOnlineAccountsSignatures(long timestamp) throws DataException {
-		String sql = "UPDATE Blocks set online_accounts_signatures = NULL WHERE minted_when < ? AND online_accounts_signatures IS NOT NULL";
+	public int getOnlineAccountsSignaturesTrimHeight() throws DataException {
+		String sql = "SELECT online_signatures_trim_height FROM DatabaseInfo";
 
-		try {
-			return this.repository.checkedExecuteUpdateCount(sql, timestamp);
+		try (ResultSet resultSet = this.repository.checkedExecute(sql)) {
+			if (resultSet == null)
+				return 0;
+
+			return resultSet.getInt(1);
 		} catch (SQLException e) {
-			throw new DataException("Unable to trim old online accounts signatures in repository", e);
+			throw new DataException("Unable to fetch online accounts signatures trim height from repository", e);
 		}
 	}
 
 	@Override
-	public BlockData getDetachedBlockSignature() throws DataException {
+	public void setOnlineAccountsSignaturesTrimHeight(int trimHeight) throws DataException {
+		// trimHeightsLock is to prevent concurrent update on DatabaseInfo
+		// that could result in "transaction rollback: serialization failure"
+		synchronized (this.repository.trimHeightsLock) {
+			String updateSql = "UPDATE DatabaseInfo SET online_signatures_trim_height = ?";
+
+			try {
+				this.repository.executeCheckedUpdate(updateSql, trimHeight);
+				this.repository.saveChanges();
+			} catch (SQLException e) {
+				repository.examineException(e);
+				throw new DataException("Unable to set online accounts signatures trim height in repository", e);
+			}
+		}
+	}
+
+	@Override
+	public int trimOldOnlineAccountsSignatures(int minHeight, int maxHeight) throws DataException {
+		// We're often called so no need to trim all blocks in one go.
+		// Limit updates to reduce CPU and memory load.
+		String sql = "UPDATE Blocks SET online_accounts_signatures = NULL "
+				+ "WHERE online_accounts_signatures IS NOT NULL "
+				+ "AND height BETWEEN ? AND ?";
+
+		try {
+			return this.repository.executeCheckedUpdate(sql, minHeight, maxHeight);
+		} catch (SQLException e) {
+			repository.examineException(e);
+			throw new DataException("Unable to trim old online accounts signatures in repository", e);
+		}
+	}
+
+
+	@Override
+	public int getBlockPruneHeight() throws DataException {
+		String sql = "SELECT block_prune_height FROM DatabaseInfo";
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql)) {
+			if (resultSet == null)
+				return 0;
+
+			return resultSet.getInt(1);
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch block prune height from repository", e);
+		}
+	}
+
+	@Override
+	public void setBlockPruneHeight(int pruneHeight) throws DataException {
+		// trimHeightsLock is to prevent concurrent update on DatabaseInfo
+		// that could result in "transaction rollback: serialization failure"
+		synchronized (this.repository.trimHeightsLock) {
+			String updateSql = "UPDATE DatabaseInfo SET block_prune_height = ?";
+
+			try {
+				this.repository.executeCheckedUpdate(updateSql, pruneHeight);
+				this.repository.saveChanges();
+			} catch (SQLException e) {
+				repository.examineException(e);
+				throw new DataException("Unable to set block prune height in repository", e);
+			}
+		}
+	}
+
+	@Override
+	public int pruneBlocks(int minHeight, int maxHeight) throws DataException {
+		// Don't prune the genesis block
+		if (minHeight <= 1) {
+			minHeight = 2;
+		}
+
+		try {
+			return this.repository.delete("Blocks", "height BETWEEN ? AND ?", minHeight, maxHeight);
+		} catch (SQLException e) {
+			throw new DataException("Unable to prune blocks from repository", e);
+		}
+	}
+
+
+	@Override
+	public BlockData getDetachedBlockSignature(int startHeight) throws DataException {
 		String sql = "SELECT " + BLOCK_DB_COLUMNS + " FROM Blocks "
 				+ "LEFT OUTER JOIN Blocks AS ParentBlocks "
 				+ "ON ParentBlocks.signature = Blocks.reference "
-				+ "WHERE ParentBlocks.signature IS NULL AND Blocks.height > 1 "
+				+ "WHERE ParentBlocks.signature IS NULL AND Blocks.height > ? "
 				+ "ORDER BY Blocks.height ASC LIMIT 1";
 
-		try (ResultSet resultSet = this.repository.checkedExecute(sql)) {
+		try (ResultSet resultSet = this.repository.checkedExecute(sql, startHeight)) {
 			return getBlockFromResultSet(resultSet);
 		} catch (SQLException e) {
 			throw new DataException("Error fetching block by signature from repository", e);

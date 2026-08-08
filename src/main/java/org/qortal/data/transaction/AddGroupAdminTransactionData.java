@@ -1,13 +1,12 @@
 package org.qortal.data.transaction;
 
-import javax.xml.bind.Unmarshaller;
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-
+import io.swagger.v3.oas.annotations.media.Schema;
 import org.eclipse.persistence.oxm.annotations.XmlDiscriminatorValue;
 import org.qortal.transaction.Transaction.TransactionType;
 
-import io.swagger.v3.oas.annotations.media.Schema;
+import javax.xml.bind.Unmarshaller;
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
 
 // All properties to be converted to JSON via JAXB
 @XmlAccessorType(XmlAccessType.FIELD)

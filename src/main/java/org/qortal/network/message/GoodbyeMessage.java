@@ -1,13 +1,12 @@
 package org.qortal.network.message;
 
-import static java.util.Arrays.stream;
-import static java.util.stream.Collectors.toMap;
+import com.google.common.primitives.Ints;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Map;
 
-import com.google.common.primitives.Ints;
+import static java.util.Arrays.stream;
+import static java.util.stream.Collectors.toMap;
 
 public class GoodbyeMessage extends Message {
 
@@ -22,7 +21,7 @@ public class GoodbyeMessage extends Message {
 		private static final Map<Integer, Reason> map = stream(Reason.values())
 				.collect(toMap(reason -> reason.value, reason -> reason));
 
-		private Reason(int value) {
+		Reason(int value) {
 			this.value = value;
 		}
 
@@ -31,7 +30,14 @@ public class GoodbyeMessage extends Message {
 		}
 	}
 
-	private final Reason reason;
+	private Reason reason;
+
+	public GoodbyeMessage(Reason reason) {
+		super(MessageType.GOODBYE);
+
+		this.dataBytes = Ints.toByteArray(reason.value);
+		this.checksumBytes = Message.generateChecksum(this.dataBytes);
+	}
 
 	private GoodbyeMessage(int id, Reason reason) {
 		super(id, MessageType.GOODBYE);
@@ -39,27 +45,18 @@ public class GoodbyeMessage extends Message {
 		this.reason = reason;
 	}
 
-	public GoodbyeMessage(Reason reason) {
-		this(-1, reason);
-	}
-
 	public Reason getReason() {
 		return this.reason;
 	}
 
-	public static Message fromByteBuffer(int id, ByteBuffer byteBuffer) {
+	public static Message fromByteBuffer(int id, ByteBuffer byteBuffer) throws MessageException {
 		int reasonValue = byteBuffer.getInt();
 
 		Reason reason = Reason.valueOf(reasonValue);
 		if (reason == null)
-			return null;
+			throw new MessageException("Invalid reason " + reasonValue + " in GOODBYE message");
 
 		return new GoodbyeMessage(id, reason);
-	}
-
-	@Override
-	protected byte[] toData() throws IOException {
-		return Ints.toByteArray(this.reason.value);
 	}
 
 }

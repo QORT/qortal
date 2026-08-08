@@ -1,17 +1,17 @@
 package org.qortal.repository.hsqldb;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.data.asset.AssetData;
 import org.qortal.data.asset.OrderData;
 import org.qortal.data.asset.RecentTradeData;
 import org.qortal.data.asset.TradeData;
 import org.qortal.repository.AssetRepository;
 import org.qortal.repository.DataException;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 public class HSQLDBAssetRepository implements AssetRepository {
 

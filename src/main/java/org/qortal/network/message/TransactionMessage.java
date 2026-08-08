@@ -1,18 +1,20 @@
 package org.qortal.network.message;
 
-import java.io.UnsupportedEncodingException;
-import java.nio.ByteBuffer;
-
 import org.qortal.data.transaction.TransactionData;
 import org.qortal.transform.TransformationException;
 import org.qortal.transform.transaction.TransactionTransformer;
+
+import java.nio.ByteBuffer;
 
 public class TransactionMessage extends Message {
 
 	private TransactionData transactionData;
 
-	public TransactionMessage(TransactionData transactionData) {
-		this(-1, transactionData);
+	public TransactionMessage(TransactionData transactionData) throws TransformationException {
+		super(MessageType.TRANSACTION);
+
+		this.dataBytes = TransactionTransformer.toBytes(transactionData);
+		this.checksumBytes = Message.generateChecksum(this.dataBytes);
 	}
 
 	private TransactionMessage(int id, TransactionData transactionData) {
@@ -25,26 +27,16 @@ public class TransactionMessage extends Message {
 		return this.transactionData;
 	}
 
-	public static Message fromByteBuffer(int id, ByteBuffer byteBuffer) throws UnsupportedEncodingException {
-		try {
-			TransactionData transactionData = TransactionTransformer.fromByteBuffer(byteBuffer);
-
-			return new TransactionMessage(id, transactionData);
-		} catch (TransformationException e) {
-			return null;
-		}
-	}
-
-	@Override
-	protected byte[] toData() {
-		if (this.transactionData == null)
-			return null;
+	public static Message fromByteBuffer(int id, ByteBuffer byteBuffer) throws MessageException {
+		TransactionData transactionData;
 
 		try {
-			return TransactionTransformer.toBytes(this.transactionData);
+			transactionData = TransactionTransformer.fromByteBuffer(byteBuffer);
 		} catch (TransformationException e) {
-			return null;
+			throw new MessageException(e.getMessage(), e);
 		}
+
+		return new TransactionMessage(id, transactionData);
 	}
 
 }

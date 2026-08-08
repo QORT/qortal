@@ -2,6 +2,12 @@
 
 set -e
 
+# Optional git tag?
+if [ $# -ge 1 ]; then
+	git_tag="$1"
+	shift
+fi
+
 saved_pwd=$PWD
 
 # Check we are within a git repo
@@ -15,13 +21,13 @@ fi
 cd ${git_dir}
 
 # Check we are in 'master' branch
-branch_name=$( git symbolic-ref -q HEAD )
-branch_name=${branch_name##refs/heads/}
-echo "Current git branch: ${branch_name}"
-if [ "${branch_name}" != "master" ]; then
-	echo "Unexpected current branch '${branch_name}' - expecting 'master'"
-	exit 1
-fi
+# branch_name=$( git symbolic-ref -q HEAD ) || echo "Cannot determine branch name" && exit 1
+# branch_name=${branch_name##refs/heads/}
+# echo "Current git branch: ${branch_name}"
+# if [ "${branch_name}" != "master" ]; then
+# 	echo "Unexpected current branch '${branch_name}' - expecting 'master'"
+# 	exit 1
+# fi
 
 # Determine project name
 project=$( perl -n -e 'if (m/<artifactId>(\w+)<.artifactId>/) { print $1; exit }' pom.xml $)
@@ -31,10 +37,12 @@ if [ -z "${project}" ]; then
 fi
 
 # Extract git tag
-git_tag=$( git tag --points-at HEAD )
 if [ -z "${git_tag}" ]; then
-	echo "Unable to extract git tag"
-	exit 1
+	git_tag=$( git tag --points-at HEAD )
+	if [ -z "${git_tag}" ]; then
+		echo "Unable to extract git tag"
+		exit 1
+	fi
 fi
 
 build_dir=/tmp/${project}
@@ -47,11 +55,15 @@ cp target/${project}*.jar ${build_dir}/${project}.jar
 
 git show HEAD:log4j2.properties > ${build_dir}/log4j2.properties
 
-git show HEAD:run.sh > ${build_dir}/run.sh
+git show HEAD:start.sh > ${build_dir}/start.sh
+git show HEAD:stop.sh > ${build_dir}/stop.sh
+
+chmod +x ${build_dir}/start.sh
+chmod +x ${build_dir}/stop.sh
 
 printf "{\n}\n" > ${build_dir}/settings.json
 
-touch -d ${commit_ts%%+??:??} ${build_dir} ${build_dir}/*
+gtouch -d ${commit_ts%%+??:??} ${build_dir} ${build_dir}/*
 
 rm -f ${saved_pwd}/${project}.zip
-(cd ${build_dir}/..; 7z a -r -tzip ${saved_pwd}/${project}-${git_tag#v}.zip ${project}/)
+(cd ${build_dir}/..; 7z a -r -tzip ${saved_pwd}/${project}.zip ${project}/)

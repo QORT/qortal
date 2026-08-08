@@ -1,16 +1,15 @@
 package org.qortal.utils;
 
+import org.eclipse.persistence.oxm.annotations.XmlVariableNode;
+
+import javax.xml.bind.annotation.XmlTransient;
+import javax.xml.bind.annotation.XmlValue;
+import javax.xml.bind.annotation.adapters.XmlAdapter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-
-import javax.xml.bind.annotation.XmlTransient;
-import javax.xml.bind.annotation.XmlValue;
-import javax.xml.bind.annotation.adapters.XmlAdapter;
-
-import org.eclipse.persistence.oxm.annotations.XmlVariableNode;
 
 public class StringLongMapXmlAdapter extends XmlAdapter<StringLongMapXmlAdapter.StringLongMap, Map<String, Long>> {
 

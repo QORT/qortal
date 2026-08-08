@@ -1,21 +1,24 @@
 package org.qortal.repository.hsqldb;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.List;
-
-import org.qortal.data.group.GroupAdminData;
-import org.qortal.data.group.GroupBanData;
-import org.qortal.data.group.GroupData;
-import org.qortal.data.group.GroupInviteData;
-import org.qortal.data.group.GroupJoinRequestData;
-import org.qortal.data.group.GroupMemberData;
+import org.qortal.data.group.*;
 import org.qortal.group.Group.ApprovalThreshold;
 import org.qortal.repository.DataException;
 import org.qortal.repository.GroupRepository;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
 public class HSQLDBGroupRepository implements GroupRepository {
+
+	private static final int GROUP_MEMBER_ADDRESS_BATCH_SIZE = 500;
 
 	protected HSQLDBRepository repository;
 
@@ -125,6 +128,72 @@ public class HSQLDBGroupRepository implements GroupRepository {
 			return this.repository.exists("Groups", "reduced_group_name = ?", reducedGroupName);
 		} catch (SQLException e) {
 			throw new DataException("Unable to check for reduced group name in repository", e);
+		}
+	}
+
+	@Override
+	public List<GroupBalanceData> getGroupMemberBalances(Integer limit, Integer offset, Boolean reverse) throws DataException {
+
+		Map<Integer, GroupData> groupById
+				= this.getAllGroups().stream().collect(Collectors.toMap(GroupData::getGroupId, Function.identity()));
+
+		StringBuilder sql = new StringBuilder(512);
+
+		sql.append("SELECT group_id, count(*) as memberCount, sum(balance)/100000000 as memberBalance " +
+				"FROM GROUPMEMBERS " +
+				"JOIN ACCOUNTBALANCES on account = address " +
+				"JOIN GROUPS using (group_id) " +
+				"LEFT JOIN PRIMARYNAMES using (owner) " +
+				"WHERE asset_id = 0 " +
+				"GROUP BY group_id " +
+				"ORDER BY memberBalance");
+
+		if (reverse != null && reverse) {
+			sql.append(" DESC");
+		}
+		else {
+			sql.append(" ASC");
+		}
+
+		HSQLDBRepository.limitOffsetSql(sql, limit, offset);
+
+		List<GroupBalanceData> groups = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString())) {
+			if (resultSet == null)
+				return groups;
+
+			do {
+				int groupId = resultSet.getInt(1);
+				int memberCount = resultSet.getInt(2);
+				int memberBalance = resultSet.getInt(3);
+
+				GroupData group = groupById.get(groupId);
+
+				groups.add(
+					new GroupBalanceData(
+						groupId,
+						group.getOwner(),
+						group.getGroupName(),
+						group.getDescription(),
+						group.getCreated(),
+						group.getUpdated(),
+						group.isOpen(),
+						group.getApprovalThreshold(),
+						group.getMinimumBlockDelay(),
+						group.getMaximumBlockDelay(),
+						group.getReference(),
+						group.getCreationGroupId(),
+						group.getReducedGroupName(),
+						memberCount,
+						memberBalance
+					)
+				);
+			} while (resultSet.next());
+
+			return groups;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch group member balances from repository", e);
 		}
 	}
 
@@ -293,6 +362,58 @@ public class HSQLDBGroupRepository implements GroupRepository {
 	}
 
 	@Override
+	public List<GroupData> getGroupsByAdmin(String address, Integer limit, Integer offset, Boolean reverse) throws DataException {
+		StringBuilder sql = new StringBuilder(512);
+
+		sql.append("SELECT group_id, owner, group_name, description, created_when, updated_when, reference, is_open, "
+				+ "approval_threshold, min_block_delay, max_block_delay, creation_group_id, reduced_group_name "
+				+ "FROM Groups JOIN GroupAdmins ON Groups.group_id = GroupAdmins.group_id "
+				+ "WHERE GroupAdmins.admin = ? ORDER BY group_name");
+
+		if (reverse != null && reverse)
+			sql.append(" DESC");
+
+		HSQLDBRepository.limitOffsetSql(sql, limit, offset);
+
+		List<GroupData> groups = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), address)) {
+			if (resultSet == null)
+				return groups;
+
+			do {
+				int groupId = resultSet.getInt(1);
+				String owner = resultSet.getString(2);
+				String groupName = resultSet.getString(3);
+				String description = resultSet.getString(4);
+				long created = resultSet.getLong(5);
+
+				Long updated = resultSet.getLong(6);
+				if (updated == 0 && resultSet.wasNull())
+					updated = null;
+
+				byte[] reference = resultSet.getBytes(7);
+				boolean isOpen = resultSet.getBoolean(8);
+
+				ApprovalThreshold approvalThreshold = ApprovalThreshold.valueOf(resultSet.getInt(9));
+
+				int minBlockDelay = resultSet.getInt(10);
+				int maxBlockDelay = resultSet.getInt(11);
+
+				int creationGroupId = resultSet.getInt(12);
+				String reducedGroupName = resultSet.getString(13);
+
+				groups.add(new GroupData(groupId, owner, groupName, description, created, updated, isOpen,
+						approvalThreshold, minBlockDelay, maxBlockDelay, reference, creationGroupId, reducedGroupName));
+			} while (resultSet.next());
+
+			return groups;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch admin's groups from repository", e);
+		}
+	}
+
+	@Override
 	public void save(GroupData groupData) throws DataException {
 		HSQLDBSaver saveHelper = new HSQLDBSaver("Groups");
 
@@ -356,8 +477,23 @@ public class HSQLDBGroupRepository implements GroupRepository {
 	// Group Admins
 
 	@Override
-	public GroupAdminData getAdmin(int groupId, String address) throws DataException {
+	public GroupAdminData getAdminFaulty(int groupId, String address) throws DataException {
 		try (ResultSet resultSet = this.repository.checkedExecute("SELECT admin, reference FROM GroupAdmins WHERE group_id = ?", groupId)) {
+			if (resultSet == null)
+				return null;
+
+			String admin = resultSet.getString(1);
+			byte[] reference = resultSet.getBytes(2);
+
+			return new GroupAdminData(groupId, admin, reference);
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch group admin from repository", e);
+		}
+	}
+
+	@Override
+	public GroupAdminData getAdmin(int groupId, String address) throws DataException {
+		try (ResultSet resultSet = this.repository.checkedExecute("SELECT admin, reference FROM GroupAdmins WHERE group_id = ? AND admin = ?", groupId, address)) {
 			if (resultSet == null)
 				return null;
 
@@ -377,6 +513,45 @@ public class HSQLDBGroupRepository implements GroupRepository {
 		} catch (SQLException e) {
 			throw new DataException("Unable to check for group admin in repository", e);
 		}
+	}
+
+	@Override
+	public Set<String> getGroupAdminAddresses(int groupId, Collection<String> addresses) throws DataException {
+		Set<String> admins = new HashSet<>();
+		if (addresses == null || addresses.isEmpty())
+			return admins;
+
+		List<String> addressList = addresses instanceof List<?> ? (List<String>) addresses : new ArrayList<>(addresses);
+		for (int offset = 0; offset < addressList.size(); offset += GROUP_MEMBER_ADDRESS_BATCH_SIZE) {
+			int end = Math.min(offset + GROUP_MEMBER_ADDRESS_BATCH_SIZE, addressList.size());
+			List<String> batch = addressList.subList(offset, end);
+
+			StringBuilder sql = new StringBuilder(128);
+			sql.append("SELECT admin FROM GroupAdmins WHERE group_id = ? AND admin IN (");
+			for (int i = 0; i < batch.size(); ++i) {
+				if (i > 0)
+					sql.append(", ");
+				sql.append("?");
+			}
+			sql.append(")");
+
+			List<Object> bindParams = new ArrayList<>(1 + batch.size());
+			bindParams.add(groupId);
+			bindParams.addAll(batch);
+
+			try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), bindParams.toArray())) {
+				if (resultSet == null)
+					continue;
+
+				do {
+					admins.add(resultSet.getString(1));
+				} while (resultSet.next());
+			} catch (SQLException e) {
+				throw new DataException("Unable to fetch group admin addresses from repository", e);
+			}
+		}
+
+		return admins;
 	}
 
 	@Override
@@ -476,6 +651,45 @@ public class HSQLDBGroupRepository implements GroupRepository {
 	}
 
 	@Override
+	public Set<String> getGroupMemberAddresses(int groupId, Collection<String> addresses) throws DataException {
+		Set<String> members = new HashSet<>();
+		if (addresses == null || addresses.isEmpty())
+			return members;
+
+		List<String> addressList = addresses instanceof List<?> ? (List<String>) addresses : new ArrayList<>(addresses);
+		for (int offset = 0; offset < addressList.size(); offset += GROUP_MEMBER_ADDRESS_BATCH_SIZE) {
+			int end = Math.min(offset + GROUP_MEMBER_ADDRESS_BATCH_SIZE, addressList.size());
+			List<String> batch = addressList.subList(offset, end);
+
+			StringBuilder sql = new StringBuilder(128);
+			sql.append("SELECT address FROM GroupMembers WHERE group_id = ? AND address IN (");
+			for (int i = 0; i < batch.size(); ++i) {
+				if (i > 0)
+					sql.append(", ");
+				sql.append("?");
+			}
+			sql.append(")");
+
+			List<Object> bindParams = new ArrayList<>(1 + batch.size());
+			bindParams.add(groupId);
+			bindParams.addAll(batch);
+
+			try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), bindParams.toArray())) {
+				if (resultSet == null)
+					continue;
+
+				do {
+					members.add(resultSet.getString(1));
+				} while (resultSet.next());
+			} catch (SQLException e) {
+				throw new DataException("Unable to fetch group member addresses from repository", e);
+			}
+		}
+
+		return members;
+	}
+
+	@Override
 	public List<GroupMemberData> getGroupMembers(int groupId, Integer limit, Integer offset, Boolean reverse) throws DataException {
 		StringBuilder sql = new StringBuilder(256);
 
@@ -496,6 +710,33 @@ public class HSQLDBGroupRepository implements GroupRepository {
 				String member = resultSet.getString(1);
 				long joined = resultSet.getLong(2);
 				byte[] reference = resultSet.getBytes(3);
+
+				members.add(new GroupMemberData(groupId, member, joined, reference));
+			} while (resultSet.next());
+
+			return members;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch group members from repository", e);
+		}
+	}
+
+	@Override
+	public List<GroupMemberData> getAllGroupMemberships() throws DataException {
+		StringBuilder sql = new StringBuilder(256);
+
+		sql.append("SELECT address, joined_when, reference, group_id FROM GroupMembers");
+
+		List<GroupMemberData> members = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString())) {
+			if (resultSet == null)
+				return members;
+
+			do {
+				String member = resultSet.getString(1);
+				long joined = resultSet.getLong(2);
+				byte[] reference = resultSet.getBytes(3);
+				int groupId = resultSet.getInt(4);
 
 				members.add(new GroupMemberData(groupId, member, joined, reference));
 			} while (resultSet.next());
@@ -731,6 +972,68 @@ public class HSQLDBGroupRepository implements GroupRepository {
 	}
 
 	@Override
+	public List<GroupJoinRequestData> getJoinRequestsByGroupIds(List<Integer> groupIds) throws DataException {
+		if (groupIds == null || groupIds.isEmpty())
+			return new ArrayList<>();
+
+		StringBuilder sql = new StringBuilder(256);
+		sql.append("SELECT group_id, joiner, reference FROM GroupJoinRequests WHERE group_id IN (");
+		for (int i = 0; i < groupIds.size(); i++) {
+			if (i > 0) sql.append(", ");
+			sql.append("?");
+		}
+		sql.append(") ORDER BY group_id, joiner");
+
+		List<GroupJoinRequestData> joinRequests = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), groupIds.toArray(new Integer[0]))) {
+			if (resultSet == null)
+				return joinRequests;
+
+			do {
+				int groupId = resultSet.getInt(1);
+				String joiner = resultSet.getString(2);
+				byte[] reference = resultSet.getBytes(3);
+				joinRequests.add(new GroupJoinRequestData(groupId, joiner, reference));
+			} while (resultSet.next());
+
+			return joinRequests;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch join requests by group IDs from repository", e);
+		}
+	}
+
+	@Override
+	public List<GroupJoinRequestData> getJoinRequestsByJoiner(String joiner, Integer limit, Integer offset, Boolean reverse) throws DataException {
+		StringBuilder sql = new StringBuilder(256);
+
+		sql.append("SELECT group_id, reference FROM GroupJoinRequests WHERE joiner = ? ORDER BY group_id");
+
+		if (reverse != null && reverse)
+			sql.append(" DESC");
+
+		HSQLDBRepository.limitOffsetSql(sql, limit, offset);
+
+		List<GroupJoinRequestData> joinRequests = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), joiner)) {
+			if (resultSet == null)
+				return joinRequests;
+
+			do {
+				int groupId = resultSet.getInt(1);
+				byte[] reference = resultSet.getBytes(2);
+
+				joinRequests.add(new GroupJoinRequestData(groupId, joiner, reference));
+			} while (resultSet.next());
+
+			return joinRequests;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch group join requests from repository", e);
+		}
+	}
+
+	@Override
 	public void save(GroupJoinRequestData groupJoinRequestData) throws DataException {
 		HSQLDBSaver saveHelper = new HSQLDBSaver("GroupJoinRequests");
 
@@ -777,9 +1080,9 @@ public class HSQLDBGroupRepository implements GroupRepository {
 	}
 
 	@Override
-	public boolean banExists(int groupId, String offender) throws DataException {
+	public boolean banExists(int groupId, String offender, long timestamp) throws DataException {
 		try {
-			return this.repository.exists("GroupBans", "group_id = ? AND offender = ?", groupId, offender);
+			return this.repository.exists("GroupBans", "group_id = ? AND offender = ? AND (expires_when IS NULL OR expires_when > ?)", groupId, offender, timestamp);
 		} catch (SQLException e) {
 			throw new DataException("Unable to check for group ban in repository", e);
 		}
@@ -818,6 +1121,128 @@ public class HSQLDBGroupRepository implements GroupRepository {
 			} while (resultSet.next());
 
 			return bans;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch group bans from repository", e);
+		}
+	}
+
+	@Override
+	public List<GroupMemberTransactionCounterData> getBanCountsForYear(int year, Integer limit, Integer offset) throws DataException {
+		return getQualifiedCountsForYear( year, "GROUPBANTRANSACTIONS", limit, offset);
+	}
+
+	@Override
+	public List<GroupMemberTransactionCounterData> getKickCountsForYear(int year, Integer limit, Integer offset) throws DataException {
+		return getQualifiedCountsForYear( year, "GROUPKICKTRANSACTIONS", limit, offset);
+	}
+
+	/**
+	 * Get Qualified Counts For Year
+	 *
+	 * These counts are for tables where the transactions must have a complementary join transactions.
+	 *
+	 * @param year
+	 * @param tableName
+	 * @param limit
+	 * @param offset
+	 *
+	 * @return the counts for the year and table
+	 *
+	 * @throws DataException
+	 */
+	private List<GroupMemberTransactionCounterData> getQualifiedCountsForYear(int year, String tableName, Integer limit, Integer offset) throws DataException {
+
+		StringBuilder sql = new StringBuilder();
+
+		sql.append("SELECT address, name, YEAR(DATEADD('millisecond', created_when, DATE '1970-01-01')) AS year, count(*) count ");
+		sql.append("FROM ");
+		sql.append(tableName);
+		sql.append(" tx ");
+		sql.append("JOIN ACCOUNTS a on a.account = tx.address ");
+		sql.append("LEFT JOIN PRIMARYNAMES n on tx.address= n.owner ");
+		sql.append("JOIN TRANSACTIONS using (signature) ");
+		sql.append("WHERE (public_key, group_id) IN (SELECT joiner, group_id FROM JOINGROUPTRANSACTIONS) AND YEAR(DATEADD('millisecond', created_when, DATE '1970-01-01')) = ? ");
+		sql.append("GROUP BY address, name,  YEAR(DATEADD('millisecond', created_when, DATE '1970-01-01')) ");
+		sql.append("ORDER BY count DESC");
+
+		HSQLDBRepository.limitOffsetSql(sql, limit, offset);
+
+		List<GroupMemberTransactionCounterData> counts = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), year)) {
+			if (resultSet == null)
+				return counts;
+
+			do {
+				String address = resultSet.getString(1);
+				String name = resultSet.getString(2);
+				int count = resultSet.getInt(4);
+
+				counts.add(new GroupMemberTransactionCounterData(count, address, name ));
+			} while (resultSet.next());
+
+			return counts;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch group bans from repository", e);
+		}
+	}
+
+	@Override
+	public List<GroupMemberTransactionCounterData> getJoinCountsForYear(int year, Integer limit, Integer offset) throws DataException {
+		return getCountsForYear( year, "JOINGROUPTRANSACTIONS", "joiner", limit, offset);
+	}
+
+	@Override
+	public List<GroupMemberTransactionCounterData> getLeaveCountsForYear(int year, Integer limit, Integer offset) throws DataException {
+		return getCountsForYear( year, "LEAVEGROUPTRANSACTIONS", "leaver", limit, offset);
+	}
+
+	/**
+	 * Get Counts For Year
+	 *
+	 * @param year
+	 * @param tableName
+	 * @param columnName
+	 * @param limit
+	 * @param offset
+	 *
+	 * @return the counts for the year and table
+	 *
+	 * @throws DataException
+	 */
+	private List<GroupMemberTransactionCounterData> getCountsForYear(int year, String tableName, String columnName, Integer limit, Integer offset) throws DataException {
+
+		StringBuilder sql = new StringBuilder();
+
+		sql.append("SELECT a.account, name,  YEAR(DATEADD('millisecond', created_when, DATE '1970-01-01')) AS year, count(*) count ");
+		sql.append("FROM ");
+		sql.append(tableName);
+		sql.append(" tx ");
+		sql.append("JOIN ACCOUNTS a on a.public_key = tx.");
+		sql.append(columnName);
+		sql.append(" LEFT JOIN PRIMARYNAMES n on a.account= n.owner ");
+		sql.append("JOIN TRANSACTIONS using (signature) ");
+		sql.append("WHERE YEAR(DATEADD('millisecond', created_when, DATE '1970-01-01')) = ? ");
+		sql.append("GROUP BY a.account, name,  YEAR(DATEADD('millisecond', created_when, DATE '1970-01-01')) ");
+		sql.append("ORDER BY count DESC");
+
+		HSQLDBRepository.limitOffsetSql(sql, limit, offset);
+
+		List<GroupMemberTransactionCounterData> counts = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), year)) {
+			if (resultSet == null)
+				return counts;
+
+			do {
+				String address = resultSet.getString(1);
+				String name = resultSet.getString(2);
+				int count = resultSet.getInt(4);
+
+				counts.add(new GroupMemberTransactionCounterData(count, address, name ));
+			} while (resultSet.next());
+
+			return counts;
 		} catch (SQLException e) {
 			throw new DataException("Unable to fetch group bans from repository", e);
 		}

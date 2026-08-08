@@ -1,12 +1,12 @@
 package org.qortal.data.transaction;
 
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
-
+import io.swagger.v3.oas.annotations.media.Schema;
 import org.qortal.transaction.Transaction.TransactionType;
 
-import io.swagger.v3.oas.annotations.media.Schema;
+import javax.xml.bind.annotation.XmlAccessType;
+import javax.xml.bind.annotation.XmlAccessorType;
+import javax.xml.bind.annotation.XmlElement;
+import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 
 // All properties to be converted to JSON via JAXB
 @XmlAccessorType(XmlAccessType.FIELD)
@@ -88,6 +88,19 @@ public class DeployAtTransactionData extends TransactionData {
 
 	public void setAtAddress(String AtAddress) {
 		this.aTAddress = AtAddress;
+	}
+
+	// Re-expose creatorPublicKey for this transaction type for JAXB
+	@XmlElement(name = "creatorPublicKey")
+	@Schema(name = "creatorPublicKey", description = "AT creator's public key", example = "2tiMr5LTpaWCgbRvkPK8TFd7k63DyHJMMFFsz9uBf1ZP")
+	public byte[] getAtCreatorPublicKey() {
+		return this.creatorPublicKey;
+	}
+
+	@XmlElement(name = "creatorPublicKey")
+	@Schema(name = "creatorPublicKey", description = "AT creator's public key", example = "2tiMr5LTpaWCgbRvkPK8TFd7k63DyHJMMFFsz9uBf1ZP")
+	public void setAtCreatorPublicKey(byte[] creatorPublicKey) {
+		this.creatorPublicKey = creatorPublicKey;
 	}
 
 }

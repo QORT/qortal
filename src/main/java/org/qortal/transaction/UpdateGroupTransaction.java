@@ -1,8 +1,6 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
+import com.google.common.base.Utf8;
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.crypto.Crypto;
@@ -13,7 +11,8 @@ import org.qortal.group.Group;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 
-import com.google.common.base.Utf8;
+import java.util.Collections;
+import java.util.List;
 
 public class UpdateGroupTransaction extends Transaction {
 
@@ -84,6 +83,10 @@ public class UpdateGroupTransaction extends Transaction {
 
 		Account owner = getOwner();
 
+		// Check creator is group's current owner
+		if (!owner.getAddress().equals(groupData.getOwner()))
+			return ValidationResult.INVALID_GROUP_OWNER;
+
 		// Check creator has enough funds
 		if (owner.getConfirmedBalance(Asset.QORT) < this.updateGroupTransactionData.getFee())
 			return ValidationResult.NO_BALANCE;
@@ -103,10 +106,15 @@ public class UpdateGroupTransaction extends Transaction {
 		Account newOwner = getNewOwner();
 
 		// Check new owner is not banned
-		if (this.repository.getGroupRepository().banExists(this.updateGroupTransactionData.getGroupId(), newOwner.getAddress()))
+		if (this.repository.getGroupRepository().banExists(this.updateGroupTransactionData.getGroupId(), newOwner.getAddress(), this.updateGroupTransactionData.getTimestamp()))
 			return ValidationResult.BANNED_FROM_GROUP;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

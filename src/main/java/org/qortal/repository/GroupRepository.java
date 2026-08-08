@@ -1,13 +1,10 @@
 package org.qortal.repository;
 
-import java.util.List;
+import org.qortal.data.group.*;
 
-import org.qortal.data.group.GroupAdminData;
-import org.qortal.data.group.GroupBanData;
-import org.qortal.data.group.GroupData;
-import org.qortal.data.group.GroupInviteData;
-import org.qortal.data.group.GroupJoinRequestData;
-import org.qortal.data.group.GroupMemberData;
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
 
 public interface GroupRepository {
 
@@ -22,6 +19,8 @@ public interface GroupRepository {
 	public boolean groupExists(String groupName) throws DataException;
 
 	public boolean reducedGroupNameExists(String reducedGroupName) throws DataException;
+
+	public List<GroupBalanceData> getGroupMemberBalances(Integer limit, Integer offset, Boolean reverse) throws DataException;
 
 	public List<GroupData> getAllGroups(Integer limit, Integer offset, Boolean reverse) throws DataException;
 
@@ -41,6 +40,12 @@ public interface GroupRepository {
 		return getGroupsWithMember(member, null, null, null);
 	}
 
+	public List<GroupData> getGroupsByAdmin(String address, Integer limit, Integer offset, Boolean reverse) throws DataException;
+
+	public default List<GroupData> getGroupsByAdmin(String address) throws DataException {
+		return getGroupsByAdmin(address, null, null, null);
+	}
+
 	public void save(GroupData groupData) throws DataException;
 
 	public void delete(int groupId) throws DataException;
@@ -53,9 +58,13 @@ public interface GroupRepository {
 
 	// Group Admins
 
+	public GroupAdminData getAdminFaulty(int groupId, String address) throws DataException;
+
 	public GroupAdminData getAdmin(int groupId, String address) throws DataException;
 
 	public boolean adminExists(int groupId, String address) throws DataException;
+
+	public Set<String> getGroupAdminAddresses(int groupId, Collection<String> addresses) throws DataException;
 
 	public List<GroupAdminData> getGroupAdmins(int groupId, Integer limit, Integer offset, Boolean reverse) throws DataException;
 
@@ -76,11 +85,15 @@ public interface GroupRepository {
 
 	public boolean memberExists(int groupId, String address) throws DataException;
 
+	public Set<String> getGroupMemberAddresses(int groupId, Collection<String> addresses) throws DataException;
+
 	public List<GroupMemberData> getGroupMembers(int groupId, Integer limit, Integer offset, Boolean reverse) throws DataException;
 
 	public default List<GroupMemberData> getGroupMembers(int groupId) throws DataException {
 		return getGroupMembers(groupId, null, null, null);
 	}
+
+	List<GroupMemberData> getAllGroupMemberships() throws DataException;
 
 	/** Returns number of group members, or null if group doesn't exist */
 	public Integer countGroupMembers(int groupId) throws DataException;
@@ -123,6 +136,15 @@ public interface GroupRepository {
 		return getGroupJoinRequests(groupId, null, null, null);
 	}
 
+	/** Returns all join requests for the given group IDs in one query. Order: by group_id, then joiner. */
+	public List<GroupJoinRequestData> getJoinRequestsByGroupIds(List<Integer> groupIds) throws DataException;
+
+	public List<GroupJoinRequestData> getJoinRequestsByJoiner(String joiner, Integer limit, Integer offset, Boolean reverse) throws DataException;
+
+	public default List<GroupJoinRequestData> getJoinRequestsByJoiner(String joiner) throws DataException {
+		return getJoinRequestsByJoiner(joiner, null, null, null);
+	}
+
 	public void save(GroupJoinRequestData groupJoinRequestData) throws DataException;
 
 	public void deleteJoinRequest(int groupId, String joiner) throws DataException;
@@ -131,7 +153,14 @@ public interface GroupRepository {
 
 	public GroupBanData getBan(int groupId, String member) throws DataException;
 
-	public boolean banExists(int groupId, String offender) throws DataException;
+	/**
+	 * IMPORTANT: when using banExists() as part of validation, the timestamp must be that of the transaction that
+	 * is calling banExists() as part of its validation. It must NOT be the current time, unless this is being
+	 * called outside of validation, as part of an on demand check for a ban existing (such as via an API call).
+	 * This is because we need to evaluate a ban's status based on the time of the subsequent transaction, as
+	 * validation will not occur at a fixed time for every node. For some, it could be months into the future.
+	 */
+	public boolean banExists(int groupId, String offender, long timestamp) throws DataException;
 
 	public List<GroupBanData> getGroupBans(int groupId, Integer limit, Integer offset, Boolean reverse) throws DataException;
 
@@ -139,8 +168,15 @@ public interface GroupRepository {
 		return getGroupBans(groupId, null, null, null);
 	}
 
+    List<GroupMemberTransactionCounterData> getBanCountsForYear(int year, Integer limit, Integer offset) throws DataException;
+
+	List<GroupMemberTransactionCounterData> getKickCountsForYear(int year, Integer limit, Integer offset) throws DataException;
+
+	List<GroupMemberTransactionCounterData> getJoinCountsForYear(int year, Integer limit, Integer offset) throws DataException;
+
+	List<GroupMemberTransactionCounterData> getLeaveCountsForYear(int year, Integer limit, Integer offset) throws DataException;
+
 	public void save(GroupBanData groupBanData) throws DataException;
 
 	public void deleteBan(int groupId, String offender) throws DataException;
-
 }

@@ -1,23 +1,35 @@
 package org.qortal.network.message;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.nio.ByteBuffer;
-
+import com.google.common.primitives.Ints;
 import org.qortal.transform.Transformer;
 
-import com.google.common.primitives.Ints;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.BufferUnderflowException;
+import java.nio.ByteBuffer;
 
 public class ArbitraryDataMessage extends Message {
-
-	private static final int SIGNATURE_LENGTH = Transformer.SIGNATURE_LENGTH;
 
 	private byte[] signature;
 	private byte[] data;
 
 	public ArbitraryDataMessage(byte[] signature, byte[] data) {
-		this(-1, signature, data);
+		super(MessageType.ARBITRARY_DATA);
+
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+
+		try {
+			bytes.write(signature);
+
+			bytes.write(Ints.toByteArray(data.length));
+
+			bytes.write(data);
+		} catch (IOException e) {
+			throw new AssertionError("IOException shouldn't occur with ByteArrayOutputStream");
+		}
+
+		this.dataBytes = bytes.toByteArray();
+		this.checksumBytes = Message.generateChecksum(this.dataBytes);
 	}
 
 	private ArbitraryDataMessage(int id, byte[] signature, byte[] data) {
@@ -35,39 +47,19 @@ public class ArbitraryDataMessage extends Message {
 		return this.data;
 	}
 
-	public static Message fromByteBuffer(int id, ByteBuffer byteBuffer) throws UnsupportedEncodingException {
-		byte[] signature = new byte[SIGNATURE_LENGTH];
+	public static Message fromByteBuffer(int id, ByteBuffer byteBuffer) {
+		byte[] signature = new byte[Transformer.SIGNATURE_LENGTH];
 		byteBuffer.get(signature);
 
 		int dataLength = byteBuffer.getInt();
 
-		if (byteBuffer.remaining() != dataLength)
-			return null;
+		if (byteBuffer.remaining() < dataLength)
+			throw new BufferUnderflowException();
 
 		byte[] data = new byte[dataLength];
 		byteBuffer.get(data);
 
 		return new ArbitraryDataMessage(id, signature, data);
-	}
-
-	@Override
-	protected byte[] toData() {
-		if (this.data == null)
-			return null;
-
-		try {
-			ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-
-			bytes.write(this.signature);
-
-			bytes.write(Ints.toByteArray(this.data.length));
-
-			bytes.write(this.data);
-
-			return bytes.toByteArray();
-		} catch (IOException e) {
-			return null;
-		}
 	}
 
 }

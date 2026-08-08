@@ -1,5 +1,6 @@
 package org.qortal.api.resource;
 
+import com.google.common.primitives.Bytes;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
@@ -7,36 +8,21 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.parameters.RequestBody;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
-
-import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.List;
-
-import javax.servlet.http.HttpServletRequest;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.MediaType;
-
 import org.qortal.account.Account;
 import org.qortal.account.PrivateKeyAccount;
-import org.qortal.api.ApiError;
-import org.qortal.api.ApiErrors;
-import org.qortal.api.ApiException;
-import org.qortal.api.ApiExceptionFactory;
-import org.qortal.api.Security;
+import org.qortal.api.*;
+import org.qortal.api.model.AccountPenaltyStats;
 import org.qortal.api.model.ApiOnlineAccount;
 import org.qortal.api.model.RewardShareKeyRequest;
 import org.qortal.asset.Asset;
-import org.qortal.controller.Controller;
+import org.qortal.controller.LiteNode;
+import org.qortal.controller.OnlineAccountsManager;
 import org.qortal.crypto.Crypto;
-import org.qortal.data.account.AccountData;
-import org.qortal.data.account.RewardShareData;
+import org.qortal.data.account.*;
 import org.qortal.data.network.OnlineAccountData;
+import org.qortal.data.network.OnlineAccountLevel;
 import org.qortal.data.transaction.PublicizeTransactionData;
 import org.qortal.data.transaction.RewardShareTransactionData;
 import org.qortal.data.transaction.TransactionData;
@@ -56,7 +42,16 @@ import org.qortal.transform.transaction.TransactionTransformer;
 import org.qortal.utils.Amounts;
 import org.qortal.utils.Base58;
 
-import com.google.common.primitives.Bytes;
+import javax.servlet.http.HttpServletRequest;
+import javax.ws.rs.*;
+import javax.ws.rs.core.Context;
+import javax.ws.rs.core.MediaType;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Path("/addresses")
 @Tag(name = "Addresses")
@@ -110,18 +105,26 @@ public class AddressesResource {
 		if (!Crypto.isValidAddress(address))
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_ADDRESS);
 
-		byte[] lastReference = null;
+		AccountData accountData;
 
-		try (final Repository repository = RepositoryManager.getRepository()) {
-			AccountData accountData = repository.getAccountRepository().getAccount(address);
-			// Not found?
-			if (accountData == null)
-				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.ADDRESS_UNKNOWN);
-
-			lastReference = accountData.getReference();
-		} catch (DataException e) {
-			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		if (Settings.getInstance().isLite()) {
+			// Lite nodes request data from peers instead of the local db
+			accountData = LiteNode.getInstance().fetchAccountData(address);
 		}
+		else {
+			// All other node types request data from local db
+			try (final Repository repository = RepositoryManager.getRepository()) {
+				accountData = repository.getAccountRepository().getAccount(address);
+			} catch (DataException e) {
+				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+			}
+		}
+
+		// Not found?
+		if (accountData == null)
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.ADDRESS_UNKNOWN);
+
+		byte[] lastReference = accountData.getReference();
 
 		if (lastReference == null || lastReference.length == 0)
 			return "false";
@@ -157,7 +160,7 @@ public class AddressesResource {
 	)
 	@ApiErrors({ApiError.PUBLIC_KEY_NOT_FOUND, ApiError.REPOSITORY_ISSUE})
 	public List<ApiOnlineAccount> getOnlineAccounts() {
-		List<OnlineAccountData> onlineAccounts = Controller.getInstance().getOnlineAccounts();
+		List<OnlineAccountData> onlineAccounts = OnlineAccountsManager.getInstance().getOnlineAccounts();
 
 		// Map OnlineAccountData entries to OnlineAccount via reward-share data
 		try (final Repository repository = RepositoryManager.getRepository()) {
@@ -174,6 +177,69 @@ public class AddressesResource {
 			}
 
 			return apiOnlineAccounts;
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
+	@GET
+	@Path("/online/levels")
+	@Operation(
+			summary = "Return currently 'online' accounts counts, grouped by level",
+			responses = {
+					@ApiResponse(
+							description = "online accounts",
+							content = @Content(mediaType = MediaType.APPLICATION_JSON, array = @ArraySchema(schema = @Schema(implementation = ApiOnlineAccount.class)))
+					)
+			}
+	)
+	@ApiErrors({ApiError.PUBLIC_KEY_NOT_FOUND, ApiError.REPOSITORY_ISSUE})
+	public List<OnlineAccountLevel> getOnlineAccountsByLevel() {
+		List<OnlineAccountData> onlineAccounts = OnlineAccountsManager.getInstance().getOnlineAccounts();
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			List<OnlineAccountLevel> onlineAccountLevels = new ArrayList<>();
+
+			// Prepopulate all levels
+			for (int i=0; i<=10; i++)
+				onlineAccountLevels.add(new OnlineAccountLevel(i, 0));
+
+			for (OnlineAccountData onlineAccountData : onlineAccounts) {
+				try {
+					final int minterLevel = Account.getRewardShareEffectiveMintingLevelIncludingLevelZero(repository, onlineAccountData.getPublicKey());
+
+					OnlineAccountLevel onlineAccountLevel = onlineAccountLevels.stream()
+							.filter(a -> a.getLevel() == minterLevel)
+							.findFirst().orElse(null);
+
+					// Note: I don't think we can use the level as the List index here because there will be gaps.
+					// So we are forced to manually look up the existing item each time.
+					// There's probably a nice shorthand java way of doing this, but this approach gets the same result.
+
+					if (onlineAccountLevel == null) {
+						// No entry exists for this level yet, so create one
+						onlineAccountLevel = new OnlineAccountLevel(minterLevel, 1);
+						onlineAccountLevels.add(onlineAccountLevel);
+					}
+					else {
+						// Already exists - so increment the count
+						int existingCount = onlineAccountLevel.getCount();
+						onlineAccountLevel.setCount(++existingCount);
+
+						// Then replace the existing item
+						int index = onlineAccountLevels.indexOf(onlineAccountLevel);
+						onlineAccountLevels.set(index, onlineAccountLevel);
+					}
+
+				} catch (DataException e) {
+                }
+			}
+
+			// Sort by level
+			onlineAccountLevels.sort(Comparator.comparingInt(OnlineAccountLevel::getLevel));
+
+			return onlineAccountLevels;
+
 		} catch (DataException e) {
 			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
 		}
@@ -260,11 +326,8 @@ public class AddressesResource {
 			)
 		}
 	)
-	@ApiErrors({ApiError.INVALID_PUBLIC_KEY, ApiError.NON_PRODUCTION, ApiError.REPOSITORY_ISSUE})
+	@ApiErrors({ApiError.INVALID_PUBLIC_KEY, ApiError.REPOSITORY_ISSUE})
 	public String fromPublicKey(@PathParam("publickey") String publicKey58) {
-		if (Settings.getInstance().isApiRestricted())
-			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.NON_PRODUCTION);
-
 		// Decode public key
 		byte[] publicKey;
 		try {
@@ -399,6 +462,54 @@ public class AddressesResource {
 		}
 	}
 
+	@GET
+	@Path("/penalties")
+	@Operation(
+			summary = "Get addresses with penalties",
+			description = "Returns a list of accounts with a blocksMintedPenalty",
+			responses = {
+					@ApiResponse(
+							description = "accounts with penalties",
+							content = @Content(mediaType = MediaType.APPLICATION_JSON, array = @ArraySchema(schema = @Schema(implementation = AccountPenaltyData.class)))
+					)
+			}
+	)
+	@ApiErrors({ApiError.INVALID_ADDRESS, ApiError.REPOSITORY_ISSUE})
+	public List<AccountPenaltyData> getAccountsWithPenalties() {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			List<AccountData> accounts = repository.getAccountRepository().getPenaltyAccounts();
+			List<AccountPenaltyData> penalties = accounts.stream().map(a -> new AccountPenaltyData(a.getAddress(), a.getBlocksMintedPenalty())).collect(Collectors.toList());
+
+			return penalties;
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
+	@GET
+	@Path("/penalties/stats")
+	@Operation(
+			summary = "Get stats about current penalties",
+			responses = {
+					@ApiResponse(
+							description = "aggregated stats about accounts with penalties",
+							content = @Content(mediaType = MediaType.APPLICATION_JSON, array = @ArraySchema(schema = @Schema(implementation = AccountPenaltyStats.class)))
+					)
+			}
+	)
+	@ApiErrors({ApiError.INVALID_ADDRESS, ApiError.REPOSITORY_ISSUE})
+	public AccountPenaltyStats getPenaltyStats() {
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			List<AccountData> accounts = repository.getAccountRepository().getPenaltyAccounts();
+			return AccountPenaltyStats.fromAccounts(accounts);
+
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
 	@POST
 	@Path("/publicize")
 	@Operation(
@@ -473,7 +584,8 @@ public class AddressesResource {
 		}
 	)
 	@ApiErrors({ApiError.TRANSACTION_INVALID, ApiError.INVALID_DATA, ApiError.TRANSFORMATION_ERROR, ApiError.REPOSITORY_ISSUE})
-	public String computePublicize(String rawBytes58) {
+	@SecurityRequirement(name = "apiKey")
+	public String computePublicize(@HeaderParam(Security.API_KEY_HEADER) String apiKey, String rawBytes58) {
 		Security.checkApiCallAllowed(request);
 
 		try (final Repository repository = RepositoryManager.getRepository()) {
@@ -514,4 +626,160 @@ public class AddressesResource {
 		}
 	}
 
+	@GET
+	@Path("/sponsorship/{address}")
+	@Operation(
+			summary = "Returns sponsorship statistics for an account",
+			description = "Returns sponsorship statistics for an account, excluding the recipients that get real reward shares",
+			responses = {
+					@ApiResponse(
+							description = "the statistics",
+							content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = SponsorshipReport.class))
+					)
+			}
+	)
+	@ApiErrors({ApiError.INVALID_ADDRESS, ApiError.ADDRESS_UNKNOWN,  ApiError.REPOSITORY_ISSUE})
+	public SponsorshipReport getSponsorshipReport(
+			@PathParam("address") String address,
+			@QueryParam(("realRewardShareRecipient")) String[] realRewardShareRecipients) {
+		if (!Crypto.isValidAddress(address))
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_ADDRESS);
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+			SponsorshipReport report = repository.getAccountRepository().getSponsorshipReport(address, realRewardShareRecipients);
+			// Not found?
+			if (report == null)
+				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.ADDRESS_UNKNOWN);
+
+			return report;
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
+	@GET
+	@Path("/sponsorship/{address}/sponsor")
+	@Operation(
+			summary = "Returns sponsorship statistics for an account's sponsor",
+			description = "Returns sponsorship statistics for an account's sponsor, excluding the recipients that get real reward shares",
+			responses = {
+					@ApiResponse(
+							description = "the statistics",
+							content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = SponsorshipReport.class))
+					)
+			}
+	)
+	@ApiErrors({ApiError.INVALID_ADDRESS, ApiError.ADDRESS_UNKNOWN,  ApiError.REPOSITORY_ISSUE})
+	public SponsorshipReport getSponsorshipReportForSponsor(
+			@PathParam("address") String address,
+			@QueryParam("realRewardShareRecipient") String[] realRewardShareRecipients) {
+		if (!Crypto.isValidAddress(address))
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_ADDRESS);
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			// get sponsor
+			Optional<String> sponsor = repository.getAccountRepository().getSponsor(address);
+
+			// if there is not sponsor, throw error
+			if(sponsor.isEmpty()) throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.ADDRESS_UNKNOWN);
+
+			// get report for sponsor
+			SponsorshipReport report = repository.getAccountRepository().getSponsorshipReport(sponsor.get(), realRewardShareRecipients);
+
+			// Not found?
+			if (report == null)
+				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.ADDRESS_UNKNOWN);
+
+			return report;
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
+	@GET
+	@Path("/mintership/{address}")
+	@Operation(
+			summary = "Returns mintership statistics for an account",
+			description = "Returns mintership statistics for an account",
+			responses = {
+					@ApiResponse(
+							description = "the statistics",
+							content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = MintershipReport.class))
+					)
+			}
+	)
+	@ApiErrors({ApiError.INVALID_ADDRESS, ApiError.ADDRESS_UNKNOWN,  ApiError.REPOSITORY_ISSUE})
+	public MintershipReport getMintershipReport(@PathParam("address") String address,
+												@QueryParam("realRewardShareRecipient") String[] realRewardShareRecipients ) {
+		if (!Crypto.isValidAddress(address))
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.INVALID_ADDRESS);
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			// get sponsorship report for minter, fetch a list of one minter
+			SponsorshipReport report = repository.getAccountRepository().getMintershipReport(address, account -> List.of(account));
+
+			// Not found?
+			if (report == null)
+				throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.ADDRESS_UNKNOWN);
+
+			// since the report is for one minter, must get sponsee count separately
+			int sponseeCount = repository.getAccountRepository().getSponseeAddresses(address, realRewardShareRecipients).size();
+
+			// since the report is for one minter, must get the first name from a array of names that should be size 1
+			String name = report.getNames().length > 0 ? report.getNames()[0] : null;
+
+			// transform sponsorship report to mintership report
+			MintershipReport mintershipReport
+				= new MintershipReport(
+					report.getAddress(),
+					report.getLevel(),
+					report.getBlocksMinted(),
+					report.getAdjustments(),
+					report.getPenalties(),
+					report.isTransfer(),
+					name,
+					sponseeCount,
+					report.getAvgBalance(),
+					report.getArbitraryCount(),
+					report.getTransferAssetCount(),
+					report.getTransferPrivsCount(),
+					report.getSellCount(),
+					report.getSellAmount(),
+					report.getBuyCount(),
+					report.getBuyAmount()
+			);
+
+			return mintershipReport;
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
+
+	@GET
+	@Path("/levels/{minLevel}")
+	@Operation(
+			summary = "Return accounts with levels greater than or equal to input",
+			responses = {
+					@ApiResponse(
+							description = "online accounts",
+							content = @Content(mediaType = MediaType.APPLICATION_JSON, array = @ArraySchema(schema = @Schema(implementation = AddressLevelPairing.class)))
+					)
+			}
+	)
+	@ApiErrors({ApiError.REPOSITORY_ISSUE})
+
+	public List<AddressLevelPairing> getAddressLevelPairings(@PathParam("minLevel") int minLevel) {
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			// get the level address pairings
+			List<AddressLevelPairing> pairings = repository.getAccountRepository().getAddressLevelPairings(minLevel);
+
+			return pairings;
+		} catch (DataException e) {
+			throw ApiExceptionFactory.INSTANCE.createException(request, ApiError.REPOSITORY_ISSUE, e);
+		}
+	}
 }

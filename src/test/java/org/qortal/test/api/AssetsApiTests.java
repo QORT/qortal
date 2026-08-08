@@ -1,23 +1,24 @@
 package org.qortal.test.api;
 
-import static org.junit.Assert.*;
-
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-
 import org.junit.Before;
 import org.junit.Test;
 import org.qortal.api.ApiError;
 import org.qortal.api.ApiException;
 import org.qortal.api.resource.AssetsResource;
 import org.qortal.api.resource.TransactionsResource.ConfirmationStatus;
-import org.qortal.repository.Repository;
-import org.qortal.repository.RepositoryManager;
 import org.qortal.repository.AccountRepository.BalanceOrdering;
 import org.qortal.repository.DataException;
+import org.qortal.repository.Repository;
+import org.qortal.repository.RepositoryManager;
 import org.qortal.test.common.ApiCommon;
 import org.qortal.test.common.AssetUtils;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 public class AssetsApiTests extends ApiCommon {
 

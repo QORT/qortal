@@ -1,9 +1,8 @@
 package org.qortal.transform.transaction;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.ByteBuffer;
-
+import com.google.common.primitives.Ints;
+import com.google.common.primitives.Longs;
+import org.qortal.block.BlockChain;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.transaction.BaseTransactionData;
 import org.qortal.data.transaction.ChatTransactionData;
@@ -13,8 +12,9 @@ import org.qortal.transaction.Transaction.TransactionType;
 import org.qortal.transform.TransformationException;
 import org.qortal.utils.Serialization;
 
-import com.google.common.primitives.Ints;
-import com.google.common.primitives.Longs;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class ChatTransactionTransformer extends TransactionTransformer {
 
@@ -22,11 +22,13 @@ public class ChatTransactionTransformer extends TransactionTransformer {
 	private static final int NONCE_LENGTH = INT_LENGTH;
 	private static final int HAS_RECIPIENT_LENGTH = BOOLEAN_LENGTH;
 	private static final int RECIPIENT_LENGTH = ADDRESS_LENGTH;
+	private static final int HAS_CHAT_REFERENCE_LENGTH = BOOLEAN_LENGTH;
+	private static final int CHAT_REFERENCE_LENGTH = SIGNATURE_LENGTH;
 	private static final int DATA_SIZE_LENGTH = INT_LENGTH;
 	private static final int IS_TEXT_LENGTH = BOOLEAN_LENGTH;
 	private static final int IS_ENCRYPTED_LENGTH = BOOLEAN_LENGTH;
 
-	private static final int EXTRAS_LENGTH = NONCE_LENGTH + HAS_RECIPIENT_LENGTH + DATA_SIZE_LENGTH + IS_ENCRYPTED_LENGTH + IS_TEXT_LENGTH;
+	private static final int EXTRAS_LENGTH = NONCE_LENGTH + HAS_RECIPIENT_LENGTH + DATA_SIZE_LENGTH + IS_ENCRYPTED_LENGTH + IS_TEXT_LENGTH + HAS_CHAT_REFERENCE_LENGTH;
 
 	protected static final TransactionLayout layout;
 
@@ -77,13 +79,24 @@ public class ChatTransactionTransformer extends TransactionTransformer {
 
 		long fee = byteBuffer.getLong();
 
+		byte[] chatReference = null;
+
+		if (timestamp >= BlockChain.getInstance().getChatReferenceTimestamp()) {
+			boolean hasChatReference = byteBuffer.get() != 0;
+
+			if (hasChatReference) {
+				chatReference = new byte[CHAT_REFERENCE_LENGTH];
+				byteBuffer.get(chatReference);
+			}
+		}
+
 		byte[] signature = new byte[SIGNATURE_LENGTH];
 		byteBuffer.get(signature);
 
 		BaseTransactionData baseTransactionData = new BaseTransactionData(timestamp, txGroupId, reference, senderPublicKey, fee, signature);
 
 		String sender = Crypto.toAddress(senderPublicKey);
-		return new ChatTransactionData(baseTransactionData, sender, nonce, recipient, data, isText, isEncrypted);
+		return new ChatTransactionData(baseTransactionData, sender, nonce, recipient, chatReference, data, isText, isEncrypted);
 	}
 
 	public static int getDataLength(TransactionData transactionData) {
@@ -93,6 +106,9 @@ public class ChatTransactionTransformer extends TransactionTransformer {
 
 		if (chatTransactionData.getRecipient() != null)
 			dataLength += RECIPIENT_LENGTH;
+
+		if (chatTransactionData.getChatReference() != null)
+			dataLength += CHAT_REFERENCE_LENGTH;
 
 		return dataLength;
 	}
@@ -123,6 +139,16 @@ public class ChatTransactionTransformer extends TransactionTransformer {
 			bytes.write((byte) (chatTransactionData.getIsText() ? 1 : 0));
 
 			bytes.write(Longs.toByteArray(chatTransactionData.getFee()));
+
+			if (transactionData.getTimestamp() >= BlockChain.getInstance().getChatReferenceTimestamp()) {
+				// Include chat reference if it's not null
+				if (chatTransactionData.getChatReference() != null) {
+					bytes.write((byte) 1);
+					bytes.write(chatTransactionData.getChatReference());
+				} else {
+					bytes.write((byte) 0);
+				}
+			}
 
 			if (chatTransactionData.getSignature() != null)
 				bytes.write(chatTransactionData.getSignature());

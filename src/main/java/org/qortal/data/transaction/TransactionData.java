@@ -1,22 +1,18 @@
 package org.qortal.data.transaction;
 
-import java.math.BigInteger;
-import java.util.Arrays;
-
-import javax.xml.bind.annotation.XmlAccessType;
-import javax.xml.bind.annotation.XmlAccessorType;
-import javax.xml.bind.annotation.XmlElement;
-import javax.xml.bind.annotation.XmlSeeAlso;
-import javax.xml.bind.annotation.XmlTransient;
-import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
-
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.media.Schema.AccessMode;
 import org.eclipse.persistence.oxm.annotations.XmlDiscriminatorNode;
 import org.qortal.crypto.Crypto;
+import org.qortal.data.voting.PollData;
+import org.qortal.data.voting.VoteOnPollData;
 import org.qortal.transaction.Transaction.ApprovalStatus;
 import org.qortal.transaction.Transaction.TransactionType;
 
-import io.swagger.v3.oas.annotations.media.Schema;
-import io.swagger.v3.oas.annotations.media.Schema.AccessMode;
+import javax.xml.bind.annotation.*;
+import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
+import java.math.BigInteger;
+import java.util.Arrays;
 
 /*
  * If you encounter an error like:
@@ -29,6 +25,7 @@ import io.swagger.v3.oas.annotations.media.Schema.AccessMode;
 @XmlSeeAlso({GenesisTransactionData.class, PaymentTransactionData.class, RegisterNameTransactionData.class, UpdateNameTransactionData.class,
 	SellNameTransactionData.class, CancelSellNameTransactionData.class, BuyNameTransactionData.class,
 	CreatePollTransactionData.class, VoteOnPollTransactionData.class, ArbitraryTransactionData.class,
+	PollData.class, VoteOnPollData.class,
 	IssueAssetTransactionData.class, TransferAssetTransactionData.class,
 	CreateAssetOrderTransactionData.class, CancelAssetOrderTransactionData.class,
 	MultiPaymentTransactionData.class, DeployAtTransactionData.class, MessageTransactionData.class, ATTransactionData.class,
@@ -40,7 +37,7 @@ import io.swagger.v3.oas.annotations.media.Schema.AccessMode;
 	GroupApprovalTransactionData.class, SetGroupTransactionData.class,
 	UpdateAssetTransactionData.class,
 	AccountFlagsTransactionData.class, RewardShareTransactionData.class,
-	AccountLevelTransactionData.class, ChatTransactionData.class
+	AccountLevelTransactionData.class, ChatTransactionData.class, PresenceTransactionData.class
 })
 //All properties to be converted to JSON via JAXB
 @XmlAccessorType(XmlAccessType.FIELD)
@@ -72,9 +69,16 @@ public abstract class TransactionData {
 	@Schema(description = "groupID for this transaction")
 	protected int txGroupId;
 
+	@Schema(description = "recipient for this transaction")
+	protected String recipient;
+
 	// Not always present
 	@Schema(accessMode = AccessMode.READ_ONLY, hidden = true, description = "height of block containing transaction")
 	protected Integer blockHeight;
+
+	// Not always present
+	@Schema(accessMode = AccessMode.READ_ONLY, hidden = true, description = "sequence in block containing transaction")
+	protected Integer blockSequence;
 
 	// Not always present
 	@Schema(accessMode = AccessMode.READ_ONLY, description = "group-approval status")
@@ -98,7 +102,7 @@ public abstract class TransactionData {
 	/** Constructor for use by transaction subclasses. */
 	protected TransactionData(TransactionType type, BaseTransactionData baseTransactionData) {
 		this.type = type;
-
+		this.recipient = baseTransactionData.recipient;
 		this.timestamp = baseTransactionData.timestamp;
 		this.txGroupId = baseTransactionData.txGroupId;
 		this.reference = baseTransactionData.reference;
@@ -106,6 +110,7 @@ public abstract class TransactionData {
 		this.fee = baseTransactionData.fee;
 		this.signature = baseTransactionData.signature;
 		this.blockHeight = baseTransactionData.blockHeight;
+		this.blockSequence = baseTransactionData.blockSequence;
 		this.approvalStatus = baseTransactionData.approvalStatus;
 		this.approvalHeight = baseTransactionData.approvalHeight;
 	}
@@ -126,6 +131,14 @@ public abstract class TransactionData {
 
 	public int getTxGroupId() {
 		return this.txGroupId;
+	}
+
+	public String getRecipient() {
+		return this.recipient;
+	}
+
+	public void setTxGroupId(int txGroupId) {
+		this.txGroupId = txGroupId;
 	}
 
 	public byte[] getReference() {
@@ -168,6 +181,15 @@ public abstract class TransactionData {
 	@XmlTransient
 	public void setBlockHeight(Integer blockHeight) {
 		this.blockHeight = blockHeight;
+	}
+
+	public Integer getBlockSequence() {
+		return this.blockSequence;
+	}
+
+	@XmlTransient
+	public void setBlockSequence(Integer blockSequence) {
+		this.blockSequence = blockSequence;
 	}
 
 	public ApprovalStatus getApprovalStatus() {
@@ -229,5 +251,4 @@ public abstract class TransactionData {
 
 		return Arrays.equals(this.signature, otherTransactionData.signature);
 	}
-
 }

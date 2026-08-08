@@ -1,10 +1,8 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
+import org.qortal.block.BlockChain;
 import org.qortal.crypto.Crypto;
 import org.qortal.data.group.GroupData;
 import org.qortal.data.transaction.GroupBanTransactionData;
@@ -12,6 +10,10 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.group.Group;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
 
 public class GroupBanTransaction extends Transaction {
 
@@ -70,6 +72,26 @@ public class GroupBanTransaction extends Transaction {
 		if (!this.repository.getGroupRepository().adminExists(groupId, admin.getAddress()))
 			return ValidationResult.NOT_GROUP_ADMIN;
 
+		if( this.repository.getBlockRepository().getBlockchainHeight() < BlockChain.getInstance().getNullGroupMembershipHeight() ) {
+			// Can't ban if not group's current owner
+			if (!admin.getAddress().equals(groupData.getOwner()))
+				return ValidationResult.INVALID_GROUP_OWNER;
+		}
+		// if( this.repository.getBlockRepository().getBlockchainHeight() >= BlockChain.getInstance().getNullGroupMembershipHeight() )
+		else {
+			String groupOwner = this.repository.getGroupRepository().getOwner(groupId);
+			boolean groupOwnedByNullAccount = Objects.equals(groupOwner, Group.NULL_OWNER_ADDRESS);
+
+			// if null ownership group, then check for admin approval
+			if(groupOwnedByNullAccount ) {
+				// Require approval if transaction relates to a group owned by the null account
+				if (!this.needsGroupApproval())
+					return ValidationResult.GROUP_APPROVAL_REQUIRED;
+			}
+			else if (!admin.getAddress().equals(groupData.getOwner()))
+				return ValidationResult.INVALID_GROUP_OWNER;
+		}
+
 		Account offender = getOffender();
 
 		// Can't ban group owner
@@ -85,6 +107,11 @@ public class GroupBanTransaction extends Transaction {
 			return ValidationResult.NO_BALANCE;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

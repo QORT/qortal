@@ -1,24 +1,15 @@
 package org.qortal.utils;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.io.UncheckedIOException;
+import com.google.common.base.CharMatcher;
+import com.ibm.icu.text.CaseMap;
+import com.ibm.icu.text.Normalizer2;
+import com.ibm.icu.text.UnicodeSet;
+import net.codebox.homoglyph.HomoglyphBuilder;
+
+import java.io.*;
 import java.text.Normalizer;
 import java.text.Normalizer.Form;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.MissingResourceException;
-import java.util.TreeMap;
-
-import com.google.common.base.CharMatcher;
-
-import net.codebox.homoglyph.HomoglyphBuilder;
+import java.util.*;
 
 public abstract class Unicode {
 
@@ -31,6 +22,8 @@ public abstract class Unicode {
 	public static final String ZERO_WIDTH_NO_BREAK_SPACE = "\ufeff";
 
 	public static final CharMatcher ZERO_WIDTH_CHAR_MATCHER = CharMatcher.anyOf(ZERO_WIDTH_SPACE + ZERO_WIDTH_NON_JOINER + ZERO_WIDTH_JOINER + WORD_JOINER + ZERO_WIDTH_NO_BREAK_SPACE);
+	private static final UnicodeSet removableUniset = new UnicodeSet("[[:Mark:][:Other:]]").freeze();
+
 
 	private static int[] homoglyphCodePoints;
 	private static int[] reducedCodePoints;
@@ -59,7 +52,7 @@ public abstract class Unicode {
 	public static String normalize(String input) {
 		String output;
 
-		// Normalize
+		// Normalize using NFKC to recompose in canonical form
 		output = Normalizer.normalize(input, Form.NFKC);
 
 		// Remove zero-width code-points, used for rendering
@@ -91,8 +84,8 @@ public abstract class Unicode {
 	public static String sanitize(String input) {
 		String output;
 
-		// Normalize
-		output = Normalizer.normalize(input, Form.NFKD);
+		// Normalize using NFKD to decompose into individual combining code points
+		output = Normalizer2.getNFKDInstance().normalize(input);
 
 		// Remove zero-width code-points, used for rendering
 		output = removeZeroWidth(output);
@@ -100,11 +93,11 @@ public abstract class Unicode {
 		// Normalize whitespace
 		output = CharMatcher.whitespace().trimAndCollapseFrom(output, ' ');
 
-		// Remove accents, combining marks
-		output = output.replaceAll("[\\p{M}\\p{C}]", "");
+		// Remove accents, combining marks - see https://www.unicode.org/reports/tr44/#GC_Values_Table
+		output = removableUniset.stripFrom(output, true);
 
 		// Convert to lowercase
-		output = output.toLowerCase(Locale.ROOT);
+		output = CaseMap.toLower().apply(Locale.ROOT, output);
 
 		// Reduce homoglyphs
 		output = reduceHomoglyphs(output);
@@ -148,7 +141,7 @@ public abstract class Unicode {
 			while ((line = bufferedReader.readLine()) != null) {
 				line = line.trim();
 
-				if (line.startsWith("#") || line.length() == 0)
+				if (line.startsWith("#") || line.isEmpty())
 					continue;
 
 				String[] charCodes = line.split(",");

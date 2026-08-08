@@ -1,12 +1,5 @@
 package org.qortal.payment;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-
 import org.qortal.account.Account;
 import org.qortal.account.PublicKeyAccount;
 import org.qortal.asset.Asset;
@@ -19,6 +12,9 @@ import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
 import org.qortal.transaction.Transaction.ValidationResult;
 import org.qortal.utils.Amounts;
+
+import java.util.*;
+import java.util.Map.Entry;
 
 public class Payment {
 
@@ -40,8 +36,9 @@ public class Payment {
 	public ValidationResult isValid(byte[] senderPublicKey, List<PaymentData> payments, long fee, boolean isZeroAmountValid) throws DataException {
 		AssetRepository assetRepository = this.repository.getAssetRepository();
 
-		// Check fee is positive
-		if (fee <= 0)
+		// Check fee is positive or zero
+		// We have already checked that the fee is correct in the Transaction superclass
+		if (fee < 0)
 			return ValidationResult.NEGATIVE_FEE;
 
 		// Total up payment amounts by assetId

@@ -1,14 +1,13 @@
 package org.qortal.test.minting;
 
-import static org.junit.Assert.*;
-
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.qortal.account.PrivateKeyAccount;
-import org.qortal.block.BlockMinter;
-import org.qortal.controller.Controller;
+import org.qortal.block.BlockChain;
+import org.qortal.controller.BlockMinter;
+import org.qortal.controller.OnlineAccountsManager;
+import org.qortal.data.account.AccountData;
 import org.qortal.data.account.RewardShareData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
@@ -17,6 +16,10 @@ import org.qortal.test.common.AccountUtils;
 import org.qortal.test.common.BlockUtils;
 import org.qortal.test.common.Common;
 import org.qortal.test.common.TestAccount;
+
+import java.util.List;
+
+import static org.junit.Assert.*;
 
 public class BlocksMintedCountTests extends Common {
 
@@ -77,7 +80,7 @@ public class BlocksMintedCountTests extends Common {
 			assertNotNull(testRewardShareData);
 
 			// Create signed timestamps
-			Controller.getInstance().ensureTestingAccountsOnline(mintingAccount, testRewardShareAccount);
+            OnlineAccountsManager.getInstance().ensureTestingAccountsOnline(mintingAccount, testRewardShareAccount);
 
 			// Even though Alice features in two online reward-shares, she should only gain +1 blocksMinted
 			// Bob only features in one online reward-share, so should also only gain +1 blocksMinted
@@ -85,9 +88,124 @@ public class BlocksMintedCountTests extends Common {
 		}
 	}
 
+	@Test
+	public void testLevelSetting() {
+
+		boolean exceptionThrown = false;
+
+		try (final Repository repository = RepositoryManager.getRepository()) {
+
+			// get the Alice's reward share account
+			PrivateKeyAccount aliceMintingAccount = Common.getTestAccount(repository, "alice-reward-share");
+
+			// give Alice an 8 blocks minted adjustment
+			int blocksMintedAdjustmentForAlice = 8;
+			adjustMintingData(repository, "alice", blocksMintedAdjustmentForAlice);
+
+			// Confirm reward-share exists
+			RewardShareData aliceRewardShareData = repository.getAccountRepository().getRewardShare(aliceMintingAccount.getPublicKey());
+			assertNotNull(aliceRewardShareData);
+
+			// mint 40 blocks
+			for( int i = 0; i < 40; i++ ) {
+				// Create signed timestamps
+				OnlineAccountsManager.getInstance().ensureTestingAccountsOnline(aliceMintingAccount);
+
+				// Mint another block
+				BlockMinter.mintTestingBlockRetainingTimestamps(repository, aliceMintingAccount);
+
+				// assert Alice's minting data after another block minted
+				assertMintingData(repository, "alice", blocksMintedAdjustmentForAlice);
+
+				// orphan the block
+				BlockUtils.orphanLastBlock(repository);
+
+				// assert the orphaning
+				assertMintingData(repository, "alice", blocksMintedAdjustmentForAlice);
+
+				// mint another block to reverse the orpaning
+				BlockMinter.mintTestingBlockRetainingTimestamps(repository, aliceMintingAccount);
+			}
+		}
+		catch (DataException e) {
+			exceptionThrown = true;
+		}
+
+		assertFalse(exceptionThrown);
+	}
+
+	/**
+	 * Assert Minting Data
+	 *
+	 * @param repository the data repository
+	 * @param name the name of the minting account
+	 * @param adjustment the blocks minted adjustment
+	 *
+	 * @throws DataException
+	 */
+	private static void assertMintingData(Repository repository, String name, int adjustment ) throws DataException {
+
+		// get the test account data
+		TestAccount testAccount = Common.getTestAccount(repository, name);
+		AccountData testAccountData = repository.getAccountRepository().getAccount(testAccount.getAddress());
+
+		List<Integer> blocksNeededByLevel = BlockChain.getInstance().getBlocksNeededByLevel();
+
+		// determine current height and adjustment ability
+		int height = repository.getBlockRepository().getBlockchainHeight();
+		int adjustmentRemovalHeight = BlockChain.getInstance().getMintedBlocksAdjustmentRemovalHeight();
+		boolean isAdjustingEnabled = height <= adjustmentRemovalHeight;
+
+		// initialize loop variables
+		int blocksLeft;
+
+		if( isAdjustingEnabled )
+			blocksLeft = testAccountData.getBlocksMinted() + adjustment;
+		else
+			blocksLeft = testAccountData.getBlocksMinted();
+
+		int index = 0;
+		int expectedLevel = 0;
+
+		// update expected level based on the blocks needed by level list entries
+		while( blocksNeededByLevel.size() > index ) {
+
+			Integer blocksNeededByThisLevel = blocksNeededByLevel.get(index);
+			if( blocksNeededByThisLevel <= blocksLeft ) {
+				expectedLevel++;
+				blocksLeft -= blocksNeededByThisLevel;
+			}
+			else {
+				break;
+			}
+
+			index++;
+		}
+
+		// print and assert the expected and derived numbers
+		System.out.println(String.format("height = %s,expectedLevel = %s, adjustment = %s, blocksMinted = %s", height, expectedLevel, adjustment, testAccountData.getBlocksMinted()) );
+		assertEquals( expectedLevel, testAccountData.getLevel() );
+	}
+
+	/**
+	 * Adjust Minting Data
+	 *
+	 * @param repository the data repository
+	 * @param name the name of the account to adjust
+	 * @param blocksMintedAdjustment the number of blocks to adjust
+	 *
+	 * @throws DataException
+	 */
+	private static void adjustMintingData(Repository repository, String name, int blocksMintedAdjustment) throws DataException {
+		TestAccount testAccount = Common.getTestAccount(repository, name);
+		AccountData testAccountData = repository.getAccountRepository().getAccount(testAccount.getAddress());
+		testAccountData.setBlocksMintedAdjustment(blocksMintedAdjustment);
+		repository.getAccountRepository().setBlocksMintedAdjustment(testAccountData);
+	}
+
 	private void testRewardShare(Repository repository, PrivateKeyAccount testRewardShareAccount, int aliceDelta, int bobDelta) throws DataException {
 		// Create signed timestamps
-		Controller.getInstance().ensureTestingAccountsOnline(testRewardShareAccount);
+		OnlineAccountsManager.getInstance().ensureTestingAccountsOnline(testRewardShareAccount);
 
 		testRewardShareRetainingTimestamps(repository, testRewardShareAccount, aliceDelta, bobDelta);
 	}
@@ -124,5 +242,4 @@ public class BlocksMintedCountTests extends Common {
 		TestAccount testAccount = Common.getTestAccount(repository, name);
 		return repository.getAccountRepository().getAccount(testAccount.getAddress()).getBlocksMinted();
 	}
-
 }

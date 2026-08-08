@@ -1,8 +1,5 @@
 package org.qortal.transaction;
 
-import java.util.Collections;
-import java.util.List;
-
 import org.qortal.account.Account;
 import org.qortal.asset.Asset;
 import org.qortal.data.transaction.JoinGroupTransactionData;
@@ -10,6 +7,9 @@ import org.qortal.data.transaction.TransactionData;
 import org.qortal.group.Group;
 import org.qortal.repository.DataException;
 import org.qortal.repository.Repository;
+
+import java.util.Collections;
+import java.util.List;
 
 public class JoinGroupTransaction extends Transaction {
 
@@ -53,7 +53,7 @@ public class JoinGroupTransaction extends Transaction {
 			return ValidationResult.ALREADY_GROUP_MEMBER;
 
 		// Check member is not banned
-		if (this.repository.getGroupRepository().banExists(groupId, joiner.getAddress()))
+		if (this.repository.getGroupRepository().banExists(groupId, joiner.getAddress(), this.joinGroupTransactionData.getTimestamp()))
 			return ValidationResult.BANNED_FROM_GROUP;
 
 		// Check join request doesn't already exist
@@ -65,6 +65,11 @@ public class JoinGroupTransaction extends Transaction {
 			return ValidationResult.NO_BALANCE;
 
 		return ValidationResult.OK;
+	}
+
+	@Override
+	public void preProcess() throws DataException {
+		// Nothing to do
 	}
 
 	@Override

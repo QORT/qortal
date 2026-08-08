@@ -1,12 +1,23 @@
 package org.qortal.utils;
 
+import java.util.Arrays;
+import java.util.Objects;
+
 public class ByteArray implements Comparable<ByteArray> {
 
 	private int hash;
 	public final byte[] value;
 
-	public ByteArray(byte[] value) {
+	private ByteArray(byte[] value) {
 		this.value = value;
+	}
+
+	public static ByteArray wrap(byte[] value) {
+		return new ByteArray(Objects.requireNonNull(value));
+	}
+
+	public static ByteArray copyOf(byte[] value) {
+		return new ByteArray(Arrays.copyOf(value, value.length));
 	}
 
 	@Override
@@ -14,53 +25,47 @@ public class ByteArray implements Comparable<ByteArray> {
 		if (this == other)
 			return true;
 
-		if (other instanceof ByteArray)
-			return this.compareTo((ByteArray) other) == 0;
-
 		if (other instanceof byte[])
-			return this.compareTo((byte[]) other) == 0;
+			return Arrays.equals(this.value, (byte[]) other);
+
+		if (other instanceof ByteArray)
+			return Arrays.equals(this.value, ((ByteArray) other).value);
 
 		return false;
 	}
 
 	@Override
 	public int hashCode() {
-		int h = hash;
-		if (h == 0 && value.length > 0) {
-			byte[] val = value;
+		int h = this.hash;
+		byte[] val = this.value;
 
-			for (int i = 0; i < val.length; ++i)
-				h = 31 * h + val[i];
-
-			hash = h;
+		if (h == 0 && val.length > 0) {
+			this.hash = h = Arrays.hashCode(val);
 		}
 		return h;
 	}
 
 	@Override
 	public int compareTo(ByteArray other) {
-		return this.compareTo(other.value);
+		Objects.requireNonNull(other);
+		return this.compareToPrimitive(other.value);
 	}
 
-	public int compareTo(byte[] otherValue) {
-		byte[] val = value;
+	public int compareToPrimitive(byte[] otherValue) {
+		return Arrays.compareUnsigned(this.value, otherValue);
+	}
 
-		if (val.length < otherValue.length)
-			return -1;
+	public String toString() {
+		StringBuilder sb = new StringBuilder(3 + this.value.length * 6);
+		sb.append("[");
 
-		if (val.length > otherValue.length)
-			return 1;
+		if (this.value.length > 0)
+			sb.append(this.value[0]);
 
-		for (int i = 0; i < val.length; ++i) {
-			int a = val[i] & 0xFF;
-			int b = otherValue[i] & 0xFF;
-			if (a < b)
-				return -1;
-			if (a > b)
-				return 1;
-		}
+		for (int i = 1; i < this.value.length; ++i)
+			sb.append(", ").append(this.value[i]);
 
-		return 0;
+		return sb.append("]").toString();
 	}
 
 }

@@ -1,11 +1,10 @@
 package org.qortal.data.asset;
 
-import java.math.BigDecimal;
+import io.swagger.v3.oas.annotations.media.Schema;
 
 import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
-
-import io.swagger.v3.oas.annotations.media.Schema;
+import java.math.BigDecimal;
 
 // All properties to be converted to JSON via JAXB
 @XmlAccessorType(XmlAccessType.FIELD)

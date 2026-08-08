@@ -1,11 +1,11 @@
 package org.qortal.repository;
 
-import java.util.List;
-
 import org.qortal.data.asset.AssetData;
 import org.qortal.data.asset.OrderData;
 import org.qortal.data.asset.RecentTradeData;
 import org.qortal.data.asset.TradeData;
+
+import java.util.List;
 
 public interface AssetRepository {
 

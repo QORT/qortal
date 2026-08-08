@@ -1,34 +1,23 @@
 package org.qortal.api;
 
+import org.eclipse.persistence.exceptions.XMLMarshalException;
+import org.eclipse.persistence.jaxb.JAXBContextFactory;
+import org.eclipse.persistence.jaxb.MarshallerProperties;
+import org.eclipse.persistence.jaxb.UnmarshallerProperties;
+
+import javax.net.ssl.*;
+import javax.xml.bind.*;
+import javax.xml.transform.stream.StreamSource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
-import java.net.HttpURLConnection;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.net.SocketAddress;
-import java.net.URL;
-import java.net.URLEncoder;
+import java.io.Writer;
+import java.net.*;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SNIHostName;
-import javax.net.ssl.SNIServerName;
-import javax.net.ssl.SSLParameters;
-import javax.net.ssl.SSLSocket;
-import javax.xml.bind.JAXBContext;
-import javax.xml.bind.JAXBException;
-import javax.xml.bind.UnmarshalException;
-import javax.xml.bind.Unmarshaller;
-import javax.xml.transform.stream.StreamSource;
-
-import org.eclipse.persistence.exceptions.XMLMarshalException;
-import org.eclipse.persistence.jaxb.JAXBContextFactory;
-import org.eclipse.persistence.jaxb.UnmarshallerProperties;
 
 public class ApiRequest {
 
@@ -107,6 +96,36 @@ public class ApiRequest {
 		}
 	}
 
+	private static Marshaller createMarshaller(Class<?> objectClass) {
+		try {
+			// Create JAXB context aware of object's class
+			JAXBContext jc = JAXBContextFactory.createContext(new Class[] { objectClass }, null);
+
+			// Create marshaller
+			Marshaller marshaller = jc.createMarshaller();
+
+			// Set the marshaller media type to JSON
+			marshaller.setProperty(MarshallerProperties.MEDIA_TYPE, "application/json");
+
+			// Tell marshaller not to include JSON root element in the output
+			marshaller.setProperty(MarshallerProperties.JSON_INCLUDE_ROOT, false);
+
+			return marshaller;
+		} catch (JAXBException e) {
+			throw new RuntimeException("Unable to create API marshaller", e);
+		}
+	}
+
+	public static void marshall(Writer writer, Object object) throws IOException {
+		Marshaller marshaller = createMarshaller(object.getClass());
+
+		try {
+			marshaller.marshal(object, writer);
+		} catch (JAXBException e) {
+			throw new IOException("Unable to create marshall object for API", e);
+		}
+	}
+
 	public static String getParamsString(Map<String, String> params) {
 		StringBuilder result = new StringBuilder();
 
@@ -122,7 +141,7 @@ public class ApiRequest {
 		}
 
 		String resultString = result.toString();
-		return resultString.length() > 0 ? resultString.substring(0, resultString.length() - 1) : resultString;
+		return !resultString.isEmpty() ? resultString.substring(0, resultString.length() - 1) : resultString;
 	}
 
 	/**

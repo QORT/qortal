@@ -1,15 +1,19 @@
 package org.qortal.repository.hsqldb;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.List;
-
 import org.qortal.data.voting.PollData;
+import org.qortal.data.voting.PollDataWithVotes;
 import org.qortal.data.voting.PollOptionData;
 import org.qortal.data.voting.VoteOnPollData;
 import org.qortal.repository.DataException;
 import org.qortal.repository.VotingRepository;
+
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 public class HSQLDBVotingRepository implements VotingRepository {
 
@@ -20,6 +24,55 @@ public class HSQLDBVotingRepository implements VotingRepository {
 	}
 
 	// Polls
+
+	@Override
+	public List<PollData> getAllPolls(Integer limit, Integer offset, Boolean reverse) throws DataException {
+		StringBuilder sql = new StringBuilder(512);
+
+		sql.append("SELECT poll_name, description, creator, owner, published_when FROM Polls ORDER BY poll_name");
+
+		if (reverse != null && reverse)
+			sql.append(" DESC");
+
+		HSQLDBRepository.limitOffsetSql(sql, limit, offset);
+
+		List<PollData> polls = new ArrayList<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString())) {
+			if (resultSet == null)
+				return polls;
+
+			do {
+				String pollName = resultSet.getString(1);
+				String description = resultSet.getString(2);
+				byte[] creatorPublicKey = resultSet.getBytes(3);
+				String owner = resultSet.getString(4);
+				long published = resultSet.getLong(5);
+
+				String optionsSql = "SELECT option_name FROM PollOptions WHERE poll_name = ? ORDER BY option_index ASC";
+				try (ResultSet optionsResultSet = this.repository.checkedExecute(optionsSql, pollName)) {
+					if (optionsResultSet == null)
+						return null;
+
+					List<PollOptionData> pollOptions = new ArrayList<>();
+
+					// NOTE: do-while because checkedExecute() above has already called rs.next() for us
+					do {
+						String optionName = optionsResultSet.getString(1);
+
+						pollOptions.add(new PollOptionData(optionName));
+					} while (optionsResultSet.next());
+
+					polls.add(new PollData(creatorPublicKey, owner, pollName, description, pollOptions, published));
+				}
+				
+			} while (resultSet.next());
+
+			return polls;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch polls from repository", e);
+		}
+	}
 
 	@Override
 	public PollData fromPollName(String pollName) throws DataException {
@@ -52,6 +105,80 @@ public class HSQLDBVotingRepository implements VotingRepository {
 			}
 		} catch (SQLException e) {
 			throw new DataException("Unable to fetch poll from repository", e);
+		}
+	}
+
+	@Override
+	public List<PollDataWithVotes> getPollsByPrefix(String prefix, Integer limit, Integer offset) throws DataException {
+		StringBuilder sql = new StringBuilder(1024);
+
+		// Query to get all polls matching prefix with their options and aggregated vote data
+		sql.append("SELECT ");
+		sql.append("  p.poll_name, p.description, p.creator, p.owner, p.published_when, ");
+		sql.append("  po.option_index, po.option_name, ");
+		sql.append("  COUNT(pv.voter) AS vote_count, ");
+		sql.append("  COALESCE(SUM(CASE WHEN a.blocks_minted + a.blocks_minted_penalty < 0 THEN 0 ELSE a.blocks_minted + a.blocks_minted_penalty END), 0) AS vote_weight ");
+		sql.append("FROM Polls p ");
+		sql.append("LEFT JOIN PollOptions po ON p.poll_name = po.poll_name ");
+		sql.append("LEFT JOIN PollVotes pv ON p.poll_name = pv.poll_name AND po.option_index = pv.option_index ");
+		sql.append("LEFT JOIN Accounts a ON pv.voter = a.public_key ");
+		sql.append("WHERE p.poll_name LIKE ? ");
+		sql.append("GROUP BY p.poll_name, p.description, p.creator, p.owner, p.published_when, po.option_index, po.option_name ");
+		sql.append("ORDER BY p.poll_name, po.option_index");
+
+		HSQLDBRepository.limitOffsetSql(sql, limit, offset);
+
+		List<PollDataWithVotes> results = new ArrayList<>();
+		Map<String, PollDataWithVotes> pollMap = new LinkedHashMap<>();
+
+		try (ResultSet resultSet = this.repository.checkedExecute(sql.toString(), prefix + "%")) {
+			if (resultSet == null)
+				return results;
+
+			// Process results - multiple rows per poll (one per option)
+			do {
+				String pollName = resultSet.getString(1);
+				String description = resultSet.getString(2);
+				byte[] creatorPublicKey = resultSet.getBytes(3);
+				String owner = resultSet.getString(4);
+				long published = resultSet.getLong(5);
+				Integer optionIndex = resultSet.getInt(6);
+				String optionName = resultSet.getString(7);
+				int voteCount = resultSet.getInt(8);
+				int voteWeight = resultSet.getInt(9);
+
+				// Get or create PollDataWithVotes for this poll
+				PollDataWithVotes pollWithVotes = pollMap.get(pollName);
+				if (pollWithVotes == null) {
+					// Create new poll data
+					PollData pollData = new PollData(creatorPublicKey, owner, pollName, description, new ArrayList<>(), published);
+					Map<String, Integer> voteCountMap = new HashMap<>();
+					Map<String, Integer> voteWeightMap = new HashMap<>();
+					pollWithVotes = new PollDataWithVotes(pollData, 0, 0, voteCountMap, voteWeightMap);
+					pollMap.put(pollName, pollWithVotes);
+				}
+
+				// Add option to poll if not null
+				if (optionName != null) {
+					pollWithVotes.getPollData().getPollOptions().add(new PollOptionData(optionName));
+
+					// Add vote counts and weights
+					pollWithVotes.getVoteCountMap().put(optionName, voteCount);
+					pollWithVotes.getVoteWeightMap().put(optionName, voteWeight);
+
+					// Update totals
+					pollWithVotes.setTotalVotes(pollWithVotes.getTotalVotes() + voteCount);
+					pollWithVotes.setTotalWeight(pollWithVotes.getTotalWeight() + voteWeight);
+				}
+
+			} while (resultSet.next());
+
+			// Convert map to list
+			results.addAll(pollMap.values());
+
+			return results;
+		} catch (SQLException e) {
+			throw new DataException("Unable to fetch polls by prefix from repository", e);
 		}
 	}
 

@@ -1,30 +1,29 @@
 package org.qortal.crypto;
 
+import javax.net.ssl.*;
 import java.security.cert.X509Certificate;
-
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSocketFactory;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 
 public abstract class TrustlessSSLSocketFactory {
 
-	// Create a trust manager that does not validate certificate chains
+	/**
+	 * Creates a SSLSocketFactory that ignore certificate chain validation because ElectrumX servers use mostly
+	 * self signed certificates.
+	 */
 	private static final TrustManager[] TRUSTLESS_MANAGER = new TrustManager[] {
 		new X509TrustManager() {
-			public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-				return new X509Certificate[0];
+			public X509Certificate[] getAcceptedIssuers() {
+				return null;
 			}
-
-			public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {
+			public void checkClientTrusted(X509Certificate[] certs, String authType) {
 			}
-
-			public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {
+			public void checkServerTrusted(X509Certificate[] certs, String authType) {
 			}
 		}
 	};
 
-	// Install the all-trusting trust manager
+	/**
+	 * Install the all-trusting trust manager.
+	 */
 	private static final SSLContext sc;
 	static {
 		try {
@@ -38,5 +37,4 @@ public abstract class TrustlessSSLSocketFactory {
 	public static SSLSocketFactory getSocketFactory() {
 		return sc.getSocketFactory();
 	}
-
 }
